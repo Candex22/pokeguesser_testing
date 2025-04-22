@@ -10,7 +10,7 @@
   <h1>Room Chat System</h1>
   <p>Your client ID: <span id="clientId">Connecting...</span></p>
   
-  <div class="container1">
+  <div class="container">
     <div id="lobbyScreen" class="card">
       <h2>Welcome to the Lobby</h2>
       <p>Create a new room or join an existing one:</p>
@@ -34,23 +34,25 @@
 
     <div id="gameScreen" class="card hidden">
       <h2>Game Room: <span id="gameRoomId">Loading...</span></h2>
+      <p>Try to guess the Pokémon!</p>
+      
       <div class="pokemon-card">
-        <p>Try to guess the pokemon</p>
+        <div id="pokemon-info"></div>
+      </div>
+      
+      <div class="guess-container">
+        <input type="text" id="guess-input" placeholder="Enter a Pokemon name...">
+        <button id="guess-btn" class="button">Guess</button>
+      </div>
+      
+      <div id="game-status"></div>
+      <div id="game-results" class="hidden">
+        <h3>Game Over!</h3>
+        <p id="winner-info"></p>
+        <button id="play-again-btn" class="button">Play Again</button>
       </div>
     </div>
-
-    <div class="container">
-      <h1>Guess the Pokemon</h1>
-      <div class="search-container">
-          <div class="autocomplete-container">
-              <input type="text" id="pokemon-input" placeholder="Enter a Pokemon name..." autocomplete="off">
-              <div id="autocomplete-dropdown" class="autocomplete-dropdown"></div>
-          </div>
-      </div>
-      <div id="error-message" class="error-message"></div>
-      <div id="loading" class="loading"></div>
-      <div id="pokemon-list" class="pokemon-list"></div>
-  </div>
+    
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
