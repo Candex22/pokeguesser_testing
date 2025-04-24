@@ -3,59 +3,64 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Room Chat System</title>
+  <title>Pokémon Multiplayer</title>
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
-  <h1>Room Chat System</h1>
+  <h1>Pokémon Multiplayer</h1>
   <p>Your client ID: <span id="clientId">Connecting...</span></p>
   
   <div class="container">
     <div id="lobbyScreen" class="card">
-      <h2>Welcome to the Lobby</h2>
-      <p>Create a new room or join an existing one:</p>
-      <button id="createRoomBtn" class="button">Create New Room</button>
+      <h2>Bienvenido al Lobby</h2>
+      <p>Crea una sala nueva o únete a una existente:</p>
+      <button id="createRoomBtn" class="button">Crear nueva sala</button>
       <div>
-        <input type="text" id="joinRoomInput" placeholder="Enter Room ID">
-        <button id="joinRoomBtn" class="button secondary">Join Room</button>
+        <input type="text" id="joinRoomInput" placeholder="Introduce ID de sala">
+        <button id="joinRoomBtn" class="button secondary">Unirse a sala</button>
       </div>
     </div>
     
     <div id="roomScreen" class="card hidden">
-      <h2>Room: <span id="roomId">Loading...</span></h2>
-      <p id="roomMembers">Members: Loading...</p>
-      <button id="readyBtn" class="button">Ready</button>
-      <button id="sayHelloBtn" class="button">Say Hello</button>
-      <button id="leaveRoomBtn" class="button secondary">Leave Room</button>
+      <h2>Sala: <span id="roomId">Loading...</span></h2>
+      <p id="roomMembers">Miembros: Loading...</p>
+      <p>Cuando ambos jugadores estén listos, ¡el juego comenzará!</p>
+      <button id="readyBtn" class="button">Listo</button>
+      <button id="sayHelloBtn" class="button">Saludar</button>
+      <button id="leaveRoomBtn" class="button secondary">Salir de la sala</button>
       
-      <h3>Messages:</h3>
+      <h3>Mensajes:</h3>
       <div id="messages"></div>
     </div>
 
     <div id="gameScreen" class="card hidden">
-      <h2>Game Room: <span id="gameRoomId">Loading...</span></h2>
-      <p>Try to guess the Pokémon!</p>
+      <h2>¡Adivina el Pokémon! - Sala: <span id="gameRoomId">Loading...</span></h2>
+      
+      <div id="gameStatus" class="game-status"></div>
       
       <div class="pokemon-card">
-        <div id="pokemon-info"></div>
+        <img id="pokemon-imagen" src="" alt="Pokemon" class="pokemon-image">
+        <div id="pokemon-info" class="pokemon-info"></div>
       </div>
       
-      <div class="guess-container">
-        <input type="text" id="guess-input" placeholder="Enter a Pokemon name...">
-        <button id="guess-btn" class="button">Guess</button>
+      <div class="search-container">
+        <div class="autocomplete-container">
+          <input type="text" id="pokemon-input" placeholder="Escribe el nombre del Pokémon..." autocomplete="off">
+          <div id="autocomplete-dropdown" class="autocomplete-dropdown"></div>
+        </div>
       </div>
       
-      <div id="game-status"></div>
-      <div id="game-results" class="hidden">
-        <h3>Game Over!</h3>
-        <p id="winner-info"></p>
-        <button id="play-again-btn" class="button">Play Again</button>
+      <div id="guesses" class="pokemon-list"></div>
+      
+      <div id="gameOverScreen" class="game-over-screen hidden">
+        <div id="gameOverMessage" class="game-over-message"></div>
+        <button id="playAgainBtn" class="button">Jugar de nuevo</button>
+        <button id="backToLobbyBtn" class="button secondary">Volver al Lobby</button>
       </div>
     </div>
-    
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
-  <script src="./script.js"></script>
+  <script src="../src/multiplayer.js"></script>
 </body>
 </html>
