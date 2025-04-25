@@ -1,589 +1,264 @@
-// Initialize socket and other variables
-const socket = io();
-let clientId;
-let currentRoomId;
-let isReady = false;
+import { fetchPokemonData } from './api.js';
+import { getGenerationNumber } from './utils.js';
 
-// Get DOM elements
-const lobbyScreen = document.getElementById('lobbyScreen');
-const roomScreen = document.getElementById('roomScreen');
-const gameScreen = document.getElementById('gameScreen');
-const clientIdSpan = document.getElementById('clientId');
-const roomIdSpan = document.getElementById('roomId');
-const roomMembersP = document.getElementById('roomMembers');
-const gameStatus = document.getElementById('gameStatus');
-const readyBtn = document.getElementById('readyBtn');
-const createRoomBtn = document.getElementById('createRoomBtn');
-const joinRoomBtn = document.getElementById('joinRoomBtn');
-const joinRoomInput = document.getElementById('joinRoomInput');
-const leaveRoomBtn = document.getElementById('leaveRoomBtn');
-const sayHelloBtn = document.getElementById('sayHelloBtn');
-const messagesDiv = document.getElementById('messages');
+// Estado del juego compartido para todos los jugadores en una sala
+let gameState = {
+  isGameActive: false,
+  winner: null,
+  guessCount: 0,
+  maxGuesses: 10,
+  playerGuesses: {}
+};
 
-// Pokemon game elements
-const pokemonInput = document.getElementById('pokemon-input');
-const autocompleteDropdown = document.getElementById('autocomplete-dropdown');
-const guessesDiv = document.getElementById('guesses');
-const gameOverScreen = document.getElementById('gameOverScreen');
-const gameOverMessage = document.getElementById('gameOverMessage');
-const playAgainBtn = document.getElementById('playAgainBtn');
-const backToLobbyBtn = document.getElementById('backToLobbyBtn');
-const pokemonImage = document.getElementById('pokemon-imagen');
-const pokemonInfo = document.getElementById('pokemon-info');
-
-let currentPokemonData = null;
-let guessCount = 0;
-const MAX_GUESSES = 10;
-
-// Set up socket connection
-socket.on('connect', () => {
-  clientId = socket.id;
-  if (clientIdSpan) clientIdSpan.textContent = clientId;
-  console.log('Connected with ID:', clientId);
-});
-
-// Handle errors from server
-socket.on('error', (data) => {
-  console.error('Server error:', data.message);
-  addMessage(`Error: ${data.message}`, true);
-});
-
-// Room creation handler
-if (createRoomBtn) {
-  createRoomBtn.addEventListener('click', () => {
-    socket.emit('create_room');
-  });
-}
-
-// Room created event
-socket.on('room_created', (data) => {
-  currentRoomId = data.roomId;
-  if (roomIdSpan) roomIdSpan.textContent = data.roomId;
-  updateRoomMembers(data.members);
+// Inicializar el juego multiplayer
+export function initMultiplayerGame(socket, roomId) {
+  const pokemonInput = document.getElementById('pokemon-input');
+  const pokemonList = document.getElementById('pokemon-list');
+  const errorMessage = document.getElementById('error-message');
   
-  // Switch screens
-  if (lobbyScreen) lobbyScreen.classList.add('hidden');
-  if (roomScreen) roomScreen.classList.remove('hidden');
-  
-  addMessage('Room created successfully! Share this ID with friends to join.', true);
-});
-
-// Join room handler
-if (joinRoomBtn && joinRoomInput) {
-  joinRoomBtn.addEventListener('click', () => {
-    const roomId = joinRoomInput.value.trim();
-    if (roomId) {
-      socket.emit('join_room', { roomId });
-    } else {
-      addMessage('Please enter a valid room ID', true);
-    }
-  });
-}
-
-// Room joined event
-socket.on('joined_room', (data) => {
-  currentRoomId = data.roomId;
-  if (roomIdSpan) roomIdSpan.textContent = data.roomId;
-  updateRoomMembers(data.members);
-  
-  // Switch screens
-  if (lobbyScreen) lobbyScreen.classList.add('hidden');
-  if (roomScreen) roomScreen.classList.remove('hidden');
-  
-  addMessage(`You joined room ${data.roomId}`, true);
-});
-
-// User joined event
-socket.on('user_joined', (data) => {
-  if (currentRoomId === data.roomId) {
-    addMessage(`User ${data.userId} joined the room`, true);
-  }
-});
-
-// Leave room handler
-if (leaveRoomBtn) {
-  leaveRoomBtn.addEventListener('click', () => {
-    if (currentRoomId) {
-      // Implement leave room functionality
-      socket.emit('leave_room', { roomId: currentRoomId });
-      currentRoomId = null;
-      
-      // Switch screens
-      if (roomScreen) roomScreen.classList.add('hidden');
-      if (gameScreen) gameScreen.classList.add('hidden');
-      if (lobbyScreen) lobbyScreen.classList.remove('hidden');
-      
-      addMessage('You left the room', true);
-    }
-  });
-}
-
-// Ready button handler
-if (readyBtn) {
-  readyBtn.addEventListener('click', () => {
-    isReady = !isReady;
-    readyBtn.textContent = isReady ? 'Not Ready' : 'Ready';
-    readyBtn.classList.toggle('secondary');
-    
-    if (currentRoomId) {
-      socket.emit('player_ready', {
-        roomId: currentRoomId,
-        isReady: isReady
-      });
-    }
-  });
-}
-
-// Player ready update event
-socket.on('player_ready_update', (data) => {
-  if (currentRoomId === data.roomId) {
-    updateRoomMembers(data.members);
-    
-    if (data.allReady) {
-      addMessage('All players are ready! Game starting soon...', true);
-    }
-  }
-});
-
-// Say hello button handler
-if (sayHelloBtn) {
-  sayHelloBtn.addEventListener('click', () => {
-    if (currentRoomId) {
-      socket.emit('chat_message', {
-        roomId: currentRoomId,
-        message: 'Hello everyone!'
-      });
-    }
-  });
-}
-
-// Chat message event
-socket.on('chat_message', (data) => {
-  if (currentRoomId === data.roomId) {
-    addMessage(`${data.userId}: ${data.message}`);
-  }
-});
-
-// Helper function to update room members display
-function updateRoomMembers(members) {
-  if (!roomMembersP) return;
-  
-  const memberList = members.map(member => {
-    const readyStatus = member.isReady ? '✅ Ready' : '⏳ Not Ready';
-    const isYou = member.id === clientId ? ' (You)' : '';
-    return `${member.id}${isYou}: ${readyStatus}`;
-  }).join('<br>');
-  
-  roomMembersP.innerHTML = `Members:<br>${memberList}`;
-}
-
-// Helper function to add messages to the chat
-function addMessage(text, isSystem = false) {
-  if (!messagesDiv) return;
-  
-  const messageDiv = document.createElement('div');
-  messageDiv.className = isSystem ? 'message system-message' : 'message';
-  messageDiv.textContent = text;
-  messagesDiv.appendChild(messageDiv);
-  messagesDiv.scrollTop = messagesDiv.scrollHeight;
-}
-
-// Function to handle the Pokemon input and autocomplete
-function setupPokemonInput() {
-  if (!pokemonInput) return;
-
-  // Fetch all Pokemon names for autocomplete
-  fetch('https://pokeapi.co/api/v2/pokemon?limit=1025')
-    .then(response => response.json())
-    .then(data => {
-      const pokemonList = data.results.map(pokemon => ({
-        name: pokemon.name,
-        url: pokemon.url
-      }));
-      
-      // Setup autocomplete
-      pokemonInput.addEventListener('input', function() {
-        const inputValue = this.value.toLowerCase().trim();
-        autocompleteDropdown.innerHTML = '';
-        
-        if (inputValue.length < 2) {
-          autocompleteDropdown.style.display = 'none';
-          return;
-        }
-        
-        const matches = pokemonList.filter(pokemon => 
-          pokemon.name.includes(inputValue)
-        ).slice(0, 5);
-        
-        if (matches.length > 0) {
-          autocompleteDropdown.style.display = 'block';
-          matches.forEach(pokemon => {
-            const option = document.createElement('div');
-            option.className = 'autocomplete-item';
-            option.textContent = pokemon.name;
-            option.addEventListener('click', function() {
-              pokemonInput.value = pokemon.name;
-              autocompleteDropdown.style.display = 'none';
-              submitGuess();
-            });
-            autocompleteDropdown.appendChild(option);
-          });
-        } else {
-          autocompleteDropdown.style.display = 'none';
-        }
-      });
-      
-      // Close autocomplete when clicking outside
-      document.addEventListener('click', function(e) {
-        if (e.target !== pokemonInput) {
-          autocompleteDropdown.style.display = 'none';
-        }
-      });
-      
-      // Submit on Enter key
-      pokemonInput.addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          submitGuess();
-        }
-      });
-    })
-    .catch(error => console.error('Error fetching Pokemon list:', error));
-}
-
-// Function to submit a guess
-function submitGuess() {
-  if (!pokemonInput || !currentRoomId) return;
-  
-  const pokemonName = pokemonInput.value.trim().toLowerCase();
-  if (!pokemonName) return;
-  
-  // Clear input
-  pokemonInput.value = '';
-  autocompleteDropdown.style.display = 'none';
-  
-  // Send guess to server
-  socket.emit('player_guess', { roomId: currentRoomId, guess: pokemonName });
-  
-  // Add guess to UI (will be updated with colors when response comes back)
-  addGuessToUI(pokemonName);
-}
-
-// Function to add a guess to the UI
-async function addGuessToUI(pokemonName) {
-  try {
-    // Fetch Pokemon data for the guess
-    const response = await fetch(`https://pokeapi.co/api/v2/pokemon/${pokemonName}`);
-    if (!response.ok) throw new Error('Pokemon not found');
-    
-    const pokemonData = await response.json();
-    
-    // Fetch species data
-    const speciesResponse = await fetch(pokemonData.species.url);
-    const speciesData = await speciesResponse.json();
-    
-    // Fetch evolution chain
-    const evolutionResponse = await fetch(speciesData.evolution_chain.url);
-    const evolutionChain = await evolutionResponse.json();
-    
-    // Calculate evolution stage
-    let evolutionStage = 1;
-    let chain = evolutionChain.chain;
-    
-    if (chain.species.name === pokemonName) {
-      evolutionStage = 1;
-    } else {
-      let foundInChain = false;
-      
-      for (const firstEvo of chain.evolves_to) {
-        if (firstEvo.species.name === pokemonName) {
-          evolutionStage = 2;
-          foundInChain = true;
-          break;
-        }
-        
-        for (const secondEvo of firstEvo.evolves_to) {
-          if (secondEvo.species.name === pokemonName) {
-            evolutionStage = 3;
-            foundInChain = true;
-            break;
-          }
-        }
-        
-        if (foundInChain) break;
-      }
-    }
-    
-    // Create the guess element
-    const guessDiv = document.createElement('div');
-    guessDiv.className = 'pokemon-card-guess';
-    guessDiv.id = `guess-${guessCount++}`;
-    
-    // Add Pokemon data to the guess element
-    guessDiv.innerHTML = `
-      <div class="pokemon-data">
-        <div class="pokemon-image-guess">
-          <img src="${pokemonData.sprites.front_default}" alt="${pokemonName}">
-        </div>
-        <div class="pokemon-info-guess">
-          <div id="type1" class="info-cell">${pokemonData.types[0].type.name}</div>
-          <div id="type2" class="info-cell">${pokemonData.types[1]?.type.name || 'None'}</div>
-          <div id="color" class="info-cell">${speciesData.color.name}</div>
-          <div id="evolutionStage" class="info-cell">${evolutionStage}</div>
-          <div id="weight" class="info-cell">${pokemonData.weight/10} kg</div>
-          <div id="height" class="info-cell">${pokemonData.height/10} m</div>
-          <div id="habitat" class="info-cell">${speciesData.habitat?.name || 'Unknown'}</div>
-          <div id="generation" class="info-cell">${speciesData.generation.name.replace('generation-', '')}</div>
-        </div>
-      </div>
-    `;
-    
-    // Add to the guesses container
-    if (guessesDiv) {
-      guessesDiv.insertBefore(guessDiv, guessesDiv.firstChild);
-    }
-    
-    // If we have the target Pokemon data, compare with it
-    if (currentPokemonData) {
-      comparePokemon(currentPokemonData, {
-        name: pokemonName,
-        types: pokemonData.types.map(t => t.type.name),
-        color: speciesData.color.name,
-        habitat: speciesData.habitat?.name || 'unknown',
-        height: pokemonData.height/10,
-        weight: pokemonData.weight/10,
-        evolutionStage: evolutionStage,
-        generation: parseInt(speciesData.generation.name.replace('generation-', ''))
-      }, guessDiv.id);
-    }
-    
-    // Check if we've reached the guess limit (for singleplayer mode)
-    if (guessCount >= MAX_GUESSES) {
-      // Handle max guesses reached
-      gameOverMessage.textContent = `Game over! You've used all ${MAX_GUESSES} guesses.`;
-      gameOverScreen.classList.remove('hidden');
-    }
-    
-  } catch (error) {
-    console.error('Error processing guess:', error);
-    addMessage(`Error: ${pokemonName} not found!`, true);
-  }
-}
-
-// Function to compare the guessed Pokemon with the target Pokemon
-function comparePokemon(targetPokemon, guessedPokemon, guessElementId) {
-  const guessDiv = document.getElementById(guessElementId);
-  if (!guessDiv) return;
-  
-  const attributes = guessDiv.querySelectorAll('.info-cell');
-  
-  // Compare name (win condition)
-  if (targetPokemon.name === guessedPokemon.name) {
-    // You win!
-    gameOverMessage.textContent = `You won! You guessed ${targetPokemon.name} correctly!`;
-    gameOverScreen.classList.remove('hidden');
-    return true;
+  // Ocultar pantalla de carga cuando estemos listos
+  const loadingScreen = document.getElementById('loading-screen');
+  if (loadingScreen) {
+    loadingScreen.style.display = 'none';
   }
   
-  // Compare types
-  attributes.forEach(attr => {
-    const attrId = attr.id;
-    
-    if (attrId === 'type1' && targetPokemon.types[0] === guessedPokemon.types[0]) {
-      attr.classList.add('correct');
-    }
-    
-    if (attrId === 'type2') {
-      const targetType2 = targetPokemon.types[1] || 'None';
-      const guessedType2 = guessedPokemon.types[1] || 'None';
-      
-      if (targetType2 === guessedType2) {
-        attr.classList.add('correct');
-      }
-    }
-    
-    if (attrId === 'color' && targetPokemon.color === guessedPokemon.color) {
-      attr.classList.add('correct');
-    }
-    
-    if (attrId === 'evolutionStage' && targetPokemon.evolutionStage === guessedPokemon.evolutionStage) {
-      attr.classList.add('correct');
-    }
-    
-    if (attrId === 'weight' && targetPokemon.weight === guessedPokemon.weight) {
-      attr.classList.add('correct');
-    }
-    
-    if (attrId === 'height' && targetPokemon.height === guessedPokemon.height) {
-      attr.classList.add('correct');
-    }
-    
-    if (attrId === 'habitat' && targetPokemon.habitat === guessedPokemon.habitat) {
-      attr.classList.add('correct');
-    }
-    
-    if (attrId === 'generation' && targetPokemon.generation === guessedPokemon.generation) {
-      attr.classList.add('correct');
-    }
-  });
+  // Escuchar eventos del socket relacionados con el juego
+  setupSocketListeners(socket, roomId);
   
-  return false;
-}
-
-// Initialize when the game screen becomes visible
-socket.on('game_started', (data) => {
-  if (currentRoomId === data.roomId) {
-    console.log('Game started with Pokemon ID:', data.pokemonId);
-    
-    // Switch to game screen
-    if (lobbyScreen) lobbyScreen.classList.add('hidden');
-    if (roomScreen) roomScreen.classList.add('hidden');
-    if (gameScreen) gameScreen.classList.remove('hidden');
-    
-    // Set room ID in game screen
-    const gameRoomIdElement = document.getElementById('gameRoomId');
-    if (gameRoomIdElement) gameRoomIdElement.textContent = currentRoomId;
-    
-    // Reset game elements
-    if (gameOverScreen) gameOverScreen.classList.add('hidden');
-    if (gameStatus) gameStatus.textContent = '';
-    if (guessesDiv) guessesDiv.innerHTML = '';
-    guessCount = 0;
-    
-    // Setup Pokemon input
-    setupPokemonInput();
-    
-    // Fetch Pokemon data
-    ;(async () => {
+  // Configurar el manejador del input para el envío de adivinanzas
+  pokemonInput.addEventListener('keypress', async (event) => {
+    if (event.key === 'Enter') {
+      const pokemonName = pokemonInput.value.trim().toLowerCase();
+      
+      if (!pokemonName) return;
+      
       try {
-        console.log('Fetching Pokemon with ID:', data.pokemonId);
+        // Limpiar el input
+        pokemonInput.value = '';
         
-        // Fetch Pokemon data from API
-        const pokemonResponse = await fetch(`https://pokeapi.co/api/v2/pokemon/${data.pokemonId}`);
-        const pokemon = await pokemonResponse.json();
+        // Enviar la adivinanza al servidor
+        socket.emit('guess_pokemon', { 
+          roomId, 
+          pokemonName 
+        });
         
-        // Fetch species data
-        const speciesResponse = await fetch(pokemon.species.url);
-        const species = await speciesResponse.json();
-        
-        // Fetch evolution chain
-        const evolutionResponse = await fetch(species.evolution_chain.url);
-        const evolutionChain = await evolutionResponse.json();
-        
-        // Calculate evolution stage
-        let evolutionStage = 1;
-        const chain = evolutionChain.chain;
-        if (chain.evolves_to.length > 0) {
-          if (chain.species.name === pokemon.name) {
-            evolutionStage = 1;
-          } else if (chain.evolves_to.some(evo => evo.species.name === pokemon.name)) {
-            evolutionStage = 2;
-          } else if (chain.evolves_to.some(evo => 
-            evo.evolves_to.some(finalEvo => finalEvo.species.name === pokemon.name))) {
-            evolutionStage = 3;
-          }
-        }
-        
-        // Store Pokemon data for later comparison
-        currentPokemonData = {
-          name: pokemon.name,
-          types: pokemon.types.map(t => t.type.name),
-          color: species.color.name,
-          habitat: species.habitat ? species.habitat.name : 'unknown',
-          height: pokemon.height/10,
-          weight: pokemon.weight/10,
-          evolutionStage: evolutionStage,
-          generation: parseInt(species.generation.name.replace('generation-', ''))
-        };
-        
-        // Update UI - show the sihouette but don't reveal the name
-        if (pokemonImage) {
-          pokemonImage.src = pokemon.sprites.front_default;
-          pokemonImage.style.filter = 'brightness(0)'; // Silhouette effect
-        }
-        
-        // Update pokemon info display
-        if (pokemonInfo) {
-          pokemonInfo.innerHTML = `
-            <div class="pokemon-attribute">Type 1: ${pokemon.types[0].type.name}</div>
-            <div class="pokemon-attribute">Type 2: ${pokemon.types[1] ? pokemon.types[1].type.name : 'None'}</div>
-            <div class="pokemon-attribute">Color: ${species.color.name}</div>
-            <div class="pokemon-attribute">Evolution Stage: ${evolutionStage}</div>
-            <div class="pokemon-attribute">Weight: ${pokemon.weight/10} kg</div>
-            <div class="pokemon-attribute">Height: ${pokemon.height/10} m</div>
-            <div class="pokemon-attribute">Habitat: ${species.habitat ? species.habitat.name : 'Unknown'}</div>
-            <div class="pokemon-attribute">Generation: ${species.generation.name.replace('generation-', '')}</div>
-          `;
-        }
       } catch (error) {
-        console.error('Error fetching Pokemon:', error);
+        errorMessage.textContent = "Error al procesar tu adivinanza";
+        console.error("Error:", error);
       }
-    })();
-  }
-});
-
-// Handle game ending (someone won)
-socket.on('game_ended', (data) => {
-  if (currentRoomId === data.roomId) {
-    const isWinner = data.winnerId === clientId;
-    
-    // Reveal the Pokemon
-    if (pokemonImage) {
-      pokemonImage.style.filter = 'none'; // Remove silhouette effect
-    }
-    
-    // Show game over message
-    const winnerText = isWinner ? 
-      `You won! You correctly guessed ${data.pokemonName}!` : 
-      `Player ${data.winnerId} won by correctly guessing ${data.pokemonName}!`;
-    
-    if (gameOverMessage) {
-      gameOverMessage.textContent = winnerText;
-      gameOverScreen.classList.remove('hidden');
-    }
-    
-    // Add message to chat
-    addMessage(winnerText, true);
-    
-    // Reset ready status
-    isReady = false;
-    if (readyBtn) {
-      readyBtn.textContent = 'Ready';
-      readyBtn.classList.remove('secondary');
-    }
-  }
-});
-
-// Handle wrong guess
-socket.on('guess_result', (data) => {
-  if (currentRoomId === data.roomId && !data.correct) {
-    if (gameStatus) {
-      gameStatus.textContent = `"${data.guess}" is not correct. Try again!`;
-      setTimeout(() => {
-        gameStatus.textContent = '';
-      }, 3000);
-    }
-  }
-});
-
-// Play again button
-if (playAgainBtn) {
-  playAgainBtn.addEventListener('click', () => {
-    if (currentRoomId) {
-      socket.emit('play_again', { roomId: currentRoomId });
-      gameOverScreen.classList.add('hidden');
-      readyBtn.textContent = 'Not Ready';
-      readyBtn.classList.add('secondary');
-      isReady = true;
     }
   });
 }
 
-// Back to lobby button
-if (backToLobbyBtn) {
-  backToLobbyBtn.addEventListener('click', () => {
-    gameOverScreen.classList.add('hidden');
-    gameScreen.classList.add('hidden');
-    roomScreen.classList.remove('hidden');
+// Configurar listeners para eventos del socket
+function setupSocketListeners(socket, roomId) {
+  // El servidor envía el Pokémon a adivinar
+  socket.on('pokemon_to_guess', (data) => {
+    console.log('Pokemon para adivinar recibido:', data.pokemonId);
+    // No mostramos ningún dato sobre el Pokémon al jugador
+    gameState.isGameActive = true;
+    
+    // Limpiar la lista de adivinanzas anteriores
+    const pokemonList = document.getElementById('pokemon-list');
+    pokemonList.innerHTML = '';
+    
+    // Mostrar mensaje de inicio de juego
+    addSystemMessage('¡El juego ha comenzado! Adivina el Pokémon.');
+  });
+  
+  // Respuesta a una adivinanza
+  socket.on('guess_result', async (data) => {
+    try {
+      // Obtener los datos del Pokémon adivinado para poder compararlo
+      const guessedPokemon = await fetchPokemonData(data.pokemonName);
+      
+      // Crear y mostrar la tarjeta del Pokémon adivinado con los resultados
+      createPokemonGuessCard(guessedPokemon, data.comparison, data.userId);
+      
+      // Si la adivinanza es correcta y fuimos nosotros, mostrar mensaje de victoria
+      if (data.isCorrect && data.userId === socket.id) {
+        addSystemMessage('¡Has adivinado el Pokémon correctamente! ¡Ganaste!');
+      } 
+      // Si otro jugador ganó
+      else if (data.isCorrect) {
+        addSystemMessage(`¡El jugador ${data.userId} ha adivinado el Pokémon! El juego ha terminado.`);
+      }
+      
+      // Si el juego ha terminado, mostrar el Pokémon correcto
+      if (data.gameOver) {
+        gameState.isGameActive = false;
+        
+        if (data.correctPokemon) {
+          setTimeout(() => {
+            showCorrectPokemon(data.correctPokemon);
+          }, 2000);
+        }
+      }
+    } catch (error) {
+      console.error("Error al procesar resultado de adivinanza:", error);
+    }
+  });
+  
+  // Cuando un jugador se une a la partida ya iniciada
+  socket.on('game_status', (data) => {
+    if (data.isActive) {
+      gameState.isGameActive = true;
+      
+      // Reconstruir el historial de adivinanzas
+      if (data.guessHistory && data.guessHistory.length > 0) {
+        const pokemonList = document.getElementById('pokemon-list');
+        pokemonList.innerHTML = ''; // Limpiar primero
+        
+        // Recrear las tarjetas de adivinanzas anteriores
+        data.guessHistory.forEach(guess => {
+          createPokemonGuessCard(guess.pokemon, guess.comparison, guess.userId);
+        });
+        
+        addSystemMessage('Te has unido a una partida en progreso. Revisa las adivinanzas anteriores.');
+      }
+    }
+  });
+  
+  // Cuando el juego termina (todos los jugadores se fueron, o se acabaron los intentos)
+  socket.on('game_over', (data) => {
+    gameState.isGameActive = false;
+    
+    if (data.winner) {
+      addSystemMessage(`El juego ha terminado. Ganador: ${data.winner}`);
+    } else {
+      addSystemMessage('El juego ha terminado. Nadie ha adivinado el Pokémon.');
+    }
+    
+    if (data.correctPokemon) {
+      showCorrectPokemon(data.correctPokemon);
+    }
   });
 }
+
+// Crear una tarjeta de adivinanza con información de comparación
+function createPokemonGuessCard(pokemon, comparison, userId) {
+  const pokemonList = document.getElementById('pokemon-list');
+  
+  // Crear la tarjeta del Pokémon
+  const card = document.createElement('div');
+  card.className = 'pokemon-card';
+  
+  // Mostrar tarjeta de introducción
+  const introSection = document.createElement('div');
+  introSection.className = 'pokemon-intro fade-in';
+  
+  // Identificar si es nuestra adivinanza o de otro jugador
+  const isCurrentUser = userId === socket.id;
+  const userLabel = isCurrentUser ? 'Tú' : `Jugador ${userId.substring(0, 4)}`;
+  
+  // Contenido de la introducción
+  introSection.innerHTML = `
+    <div class="intro-container">
+      <div class="intro-image">
+        <img src="${pokemon.sprite}" alt="${pokemon.name}">
+      </div>
+      <div class="intro-info">
+        <span class="intro-name">${pokemon.name}</span>
+        <p>${userLabel} ha adivinado este Pokémon</p>
+      </div>
+    </div>
+  `;
+  
+  // Sección de datos del Pokémon con comparación
+  const dataSection = document.createElement('div');
+  dataSection.className = 'pokemon-data';
+  
+  // Imagen
+  const imageDiv = document.createElement('div');
+  imageDiv.className = 'pokemon-image';
+  imageDiv.innerHTML = `<img src="${pokemon.sprite}" alt="${pokemon.name}">`;
+  
+  // Información con colores según la comparación
+  const infoDiv = document.createElement('div');
+  infoDiv.className = 'pokemon-info';
+  
+  // Añadir celdas de información con clases de color según comparación
+  const infoCells = [
+    { id: 'type1', value: pokemon.types[0], match: comparison.type1 },
+    { id: 'type2', value: pokemon.types[1] || 'Ninguno', match: comparison.type2 },
+    { id: 'color', value: pokemon.color, match: comparison.color },
+    { id: 'generation', value: `Gen ${pokemon.generation}`, match: comparison.generation },
+    { id: 'height', value: `${pokemon.height} m`, match: comparison.height },
+    { id: 'weight', value: `${pokemon.weight} kg`, match: comparison.weight },
+    { id: 'habitat', value: pokemon.habitat, match: comparison.habitat },
+    { id: 'evolutionStage', value: `Ev. ${pokemon.evolutionStage}`, match: comparison.evolutionStage }
+  ];
+  
+  infoCells.forEach(cell => {
+    const cellDiv = document.createElement('div');
+    cellDiv.id = cell.id;
+    cellDiv.className = `info-cell ${cell.match ? 'green' : 'red'}`;
+    cellDiv.textContent = cell.value;
+    infoDiv.appendChild(cellDiv);
+  });
+  
+  // Añadir las secciones a la tarjeta
+  dataSection.appendChild(imageDiv);
+  dataSection.appendChild(infoDiv);
+  card.appendChild(introSection);
+  card.appendChild(dataSection);
+  
+  // Añadir la tarjeta al principio de la lista
+  pokemonList.insertBefore(card, pokemonList.firstChild);
+  
+  // Animación de la tarjeta
+  setTimeout(() => {
+    introSection.classList.remove('fade-in');
+    introSection.classList.add('fade-out');
+    
+    setTimeout(() => {
+      const cells = card.querySelectorAll('.pokemon-image, .info-cell');
+      cells.forEach((cell, index) => {
+        setTimeout(() => {
+          cell.classList.add('animated');
+        }, index * 100);
+      });
+    }, 600);
+  }, 1500);
+}
+
+// Mostrar mensaje del sistema
+function addSystemMessage(text) {
+  const messagesDiv = document.getElementById('messages');
+  if (messagesDiv) {
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message system-message';
+    messageDiv.textContent = text;
+    messagesDiv.appendChild(messageDiv);
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+  }
+}
+
+// Mostrar el Pokémon correcto cuando termina el juego
+function showCorrectPokemon(pokemon) {
+  const gameScreen = document.getElementById('gameScreen');
+  const pokemonInfo = document.getElementById('pokemon-info');
+  const pokemonImage = document.getElementById('pokemon-imagen');
+  
+  if (gameScreen && pokemonInfo && pokemonImage) {
+    gameScreen.classList.remove('hidden');
+    
+    // Mostrar imagen del Pokémon
+    pokemonImage.src = pokemon.sprite;
+    
+    // Mostrar información completa
+    pokemonInfo.innerHTML = `
+      <h2>${pokemon.name}</h2>
+      <p>Tipo 1: ${pokemon.types[0]}</p>
+      <p>Tipo 2: ${pokemon.types[1] || 'Ninguno'}</p>
+      <p>Color: ${pokemon.color}</p>
+      <p>Generación: ${pokemon.generation}</p>
+      <p>Habitat: ${pokemon.habitat}</p>
+      <p>Altura: ${pokemon.height} m</p>
+      <p>Peso: ${pokemon.weight} kg</p>
+      <p>Etapa de evolución: ${pokemon.evolutionStage}</p>
+    `;
+  }
+}
+
+export {initMultiplayerGame}

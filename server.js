@@ -1,291 +1,284 @@
-const fetch = require('node-fetch')
-const express = require('express')
-const http = require('http')
-const socketIo = require('socket.io')
-const path = require('path')
-const { v4: uuidv4 } = require('uuid')
+// Añadir al principio del archivo junto con los otros requires
+const fetch = require('node-fetch'); // Necesitarás instalar: npm install node-fetch
 
-const app = express()
-const server = http.createServer(app)
-const io = socketIo(server)
+// Añadir dentro del objeto rooms para cada sala
+/*
+rooms[roomId] = {
+  // Propiedades existentes
+  members: [{...}],
+  gameStarted: false,
+  
+  // Nuevas propiedades para el juego
+  pokemonId: null,
+  pokemonData: null,
+  guessHistory: [],
+  winner: null
+}
+*/
 
-// Track rooms and their members
-const rooms = {}
+// Añadir estos nuevos manejadores de eventos dentro de la función socket.io.on('connection', (socket) => {...})
 
-// Serve static files from the root directory
-app.use(express.static(path.join(__dirname)))
-
-// Route for the home page
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'))
-})
-
-// Route for game room
-app.get('/room/:roomId', (req, res) => {
-  const roomId = req.params.roomId
-  if (rooms[roomId]) {
-    res.sendFile(path.join(__dirname, 'index.html'))
-  } else {
-    res.redirect('/')
+// Manejar adivinanzas de Pokémon
+socket.on('guess_pokemon', async (data) => {
+  const roomId = data.roomId;
+  const pokemonName = data.pokemonName.toLowerCase();
+  
+  if (!roomId || !rooms[roomId] || !rooms[roomId].gameStarted || !rooms[roomId].pokemonId) {
+    socket.emit('error', { message: 'No hay juego activo en esta sala' });
+    return;
   }
-})
-
-// Socket.io connection handling
-io.on('connection', (socket) => {
-  console.log(`New client connected: ${socket.id}`)
   
-  // Create a new room
-  socket.on('create_room', () => {
-    const roomId = uuidv4().substring(0, 6) // Generate shorter room ID for convenience
+  try {
+    // Obtener datos del Pokémon adivinado
+    const guessResponse = await fetch(`https://pokeapi.co/api/v2/pokemon/${pokemonName}`);
+    if (!guessResponse.ok) {
+      socket.emit('error', { message: 'Pokémon no encontrado' });
+      return;
+    }
+    const guessedPokemon = await guessResponse.json();
     
-    // Join the socket to this room
-    socket.join(roomId)
+    // Obtener datos de especie
+    const speciesResponse = await fetch(guessedPokemon.species.url);
+    const speciesData = await speciesResponse.json();
     
-    // Add room to our tracking object
-    rooms[roomId] = {
-      members: [{
-        id: socket.id,
-        isReady: false
-      }],
-      gameStarted: false
+    // Comparar con el Pokémon objetivo
+    let isCorrect = false;
+    
+    // Si es la primera adivinanza, cargar los datos del Pokémon objetivo
+    if (!rooms[roomId].pokemonData) {
+      await loadTargetPokemonData(roomId);
     }
     
-    console.log(`Room created: ${roomId} by ${socket.id}`)
+    const targetPokemon = rooms[roomId].pokemonData;
     
-    // Send room ID back to the client
-    socket.emit('room_created', {
-      roomId: roomId,
-      members: rooms[roomId].members
-    })
-  })
-  
-  // Join an existing room
-  socket.on('join_room', (data) => {
-    const roomId = data.roomId
+    // Verificar si la adivinanza es correcta
+    isCorrect = guessedPokemon.name === targetPokemon.name;
     
-    // Check if room exists
-    if (!rooms[roomId]) {
-      socket.emit('error', { message: 'Room does not exist' })
-      return
-    }
+    // Crear objeto de comparación
+    const comparison = {
+      type1: guessedPokemon.types[0]?.type.name === targetPokemon.types[0]?.type.name,
+      type2: (guessedPokemon.types[1]?.type.name || 'none') === (targetPokemon.types[1]?.type.name || 'none'),
+      color: speciesData.color.name === targetPokemon.species.color.name,
+      generation: getGenerationNumber(speciesData.generation.name) === getGenerationNumber(targetPokemon.species.generation.name),
+      height: guessedPokemon.height === targetPokemon.height,
+      weight: guessedPokemon.weight === targetPokemon.weight,
+      habitat: (speciesData.habitat?.name || 'unknown') === (targetPokemon.species.habitat?.name || 'unknown'),
+      evolutionStage: await compareEvolutionStage(speciesData, targetPokemon.evolutionStage)
+    };
     
-    // Check if user is already in room
-    const existingMember = rooms[roomId].members.find(m => m.id === socket.id)
-    if (existingMember) {
-      return // Already in room, do nothing
-    }
+    // Crear objeto de Pokémon para enviar
+    const pokemonToSend = {
+      name: guessedPokemon.name,
+      sprite: guessedPokemon.sprites.front_default,
+      types: guessedPokemon.types.map(t => t.type.name),
+      color: speciesData.color.name,
+      generation: getGenerationNumber(speciesData.generation.name),
+      height: guessedPokemon.height / 10,
+      weight: guessedPokemon.weight / 10, 
+      habitat: speciesData.habitat?.name || 'unknown',
+      evolutionStage: await determineEvolutionStage(speciesData)
+    };
     
-    // Join the socket to this room
-    socket.join(roomId)
-    
-    // Add member to room
-    rooms[roomId].members.push({
-      id: socket.id,
-      isReady: false
-    })
-    
-    console.log(`User ${socket.id} joined room: ${roomId}`)
-    
-    // Notify everyone in the room that a new user joined
-    io.to(roomId).emit('user_joined', {
+    // Guardar la adivinanza en el historial
+    rooms[roomId].guessHistory.push({
       userId: socket.id,
-      roomId: roomId
-    })
-    
-    // Confirm to the user they've joined
-    socket.emit('joined_room', {
-      roomId: roomId,
-      members: rooms[roomId].members
-    })
-  })
-  
-  // Handle player ready status
-  socket.on('player_ready', (data) => {
-    const roomId = data.roomId
-    const isReady = data.isReady
-    
-    if (!roomId || !rooms[roomId]) {
-      socket.emit('error', { message: 'Invalid room' })
-      return
-    }
-    
-    // Update player ready status
-    const member = rooms[roomId].members.find(m => m.id === socket.id)
-    if (member) {
-      member.isReady = isReady
-    }
-    
-    // Check if all players are ready
-    const allReady = rooms[roomId].members.every(m => m.isReady)
-    
-    // If all players are ready and game hasn't started, generate Pokemon ID
-    if (allReady && !rooms[roomId].gameStarted) {
-      rooms[roomId].pokemonId = Math.floor(Math.random() * 1025) + 1
-      rooms[roomId].gameStarted = true
-      console.log(`Generated Pokemon ID ${rooms[roomId].pokemonId} for room ${roomId}`)
-      
-      // Notify clients that game is starting
-      io.to(roomId).emit('player_ready_update', {
-        roomId: roomId,
-        members: rooms[roomId].members,
-        allReady: allReady,
-        gameStarted: true
-      })
-      
-      // Start the game
-      io.to(roomId).emit('game_started', {
-        roomId: roomId,
-        pokemonId: rooms[roomId].pokemonId
-      })
-    } else {
-      // Just update ready status
-      io.to(roomId).emit('player_ready_update', {
-        roomId: roomId,
-        members: rooms[roomId].members,
-        allReady: allReady,
-        gameStarted: rooms[roomId].gameStarted
-      })
-    }
-  })
-  
-  // Handle player guess
-  socket.on('player_guess', async (data) => {
-    const roomId = data.roomId;
-    const guess = data.guess.toLowerCase();
-    
-    if (!roomId || !rooms[roomId] || !rooms[roomId].gameStarted) {
-      socket.emit('error', { message: 'Invalid room or game not started' });
-      return;
-    }
-    
-    try {
-      // Fetch the current Pokemon's data if we don't have it
-      if (!rooms[roomId].pokemonName) {
-        const pokemonId = rooms[roomId].pokemonId;
-        const response = await fetch(`https://pokeapi.co/api/v2/pokemon/${pokemonId}`);
-        const pokemon = await response.json();
-        rooms[roomId].pokemonName = pokemon.name;
-      }
-      
-      // Check if the guess is correct
-      if (guess === rooms[roomId].pokemonName) {
-        console.log(`Player ${socket.id} guessed correctly: ${guess}`);
-        
-        // Notify all players about the winner
-        io.to(roomId).emit('game_ended', {
-          roomId: roomId,
-          winnerId: socket.id,
-          pokemonName: rooms[roomId].pokemonName,
-          pokemonId: rooms[roomId].pokemonId
-        });
-        
-        // Reset the game but keep players in the room
-        rooms[roomId].gameStarted = false;
-        rooms[roomId].members.forEach(member => {
-          member.isReady = false;
-        });
-      } else {
-        // Notify all players about the wrong guess
-        io.to(roomId).emit('guess_result', {
-          roomId: roomId,
-          userId: socket.id,
-          guess: guess,
-          correct: false
-        });
-      }
-    } catch (error) {
-      console.error('Error handling guess:', error);
-      socket.emit('error', { message: 'Error processing your guess' });
-    }
-  });
-
-  // Handle play again request
-  socket.on('play_again', (data) => {
-    const roomId = data.roomId;
-    
-    if (!roomId || !rooms[roomId]) {
-      socket.emit('error', { message: 'Invalid room' });
-      return;
-    }
-    
-    // Set this player as ready
-    const member = rooms[roomId].members.find(m => m.id === socket.id);
-    if (member) {
-      member.isReady = true;
-    }
-    
-    // Check if everyone is ready to play again
-    const allReady = rooms[roomId].members.every(m => m.isReady);
-    
-    // Update all clients with ready status
-    io.to(roomId).emit('player_ready_update', {
-      roomId: roomId,
-      members: rooms[roomId].members,
-      allReady: allReady,
-      gameStarted: false
+      pokemon: pokemonToSend,
+      comparison: comparison,
+      isCorrect: isCorrect
     });
     
-    // If everyone is ready, start a new game
-    if (allReady) {
-      rooms[roomId].pokemonId = Math.floor(Math.random() * 1025) + 1;
-      rooms[roomId].gameStarted = true;
-      
-      // Fetch the Pokémon name so we can check guesses
-      fetch(`https://pokeapi.co/api/v2/pokemon/${rooms[roomId].pokemonId}`)
-        .then(response => response.json())
-        .then(data => {
-          rooms[roomId].pokemonName = data.name;
-          console.log(`Generated Pokemon ${rooms[roomId].pokemonName} (ID: ${rooms[roomId].pokemonId}) for room ${roomId}`);
-          
-          // Notify all clients that the game has started
-          io.to(roomId).emit('game_started', {
-            roomId: roomId,
-            pokemonId: rooms[roomId].pokemonId
-          });
-        })
-        .catch(error => {
-          console.error('Error fetching Pokemon data:', error);
-        });
+    // Si es correcto, establecer ganador
+    if (isCorrect) {
+      rooms[roomId].winner = socket.id;
     }
+    
+    // Enviar resultado a todos los jugadores
+    io.to(roomId).emit('guess_result', {
+      userId: socket.id,
+      pokemonName: guessedPokemon.name,
+      comparison: comparison,
+      isCorrect: isCorrect,
+      gameOver: isCorrect,
+      correctPokemon: isCorrect ? targetPokemon : null
+    });
+    
+    // Si la adivinanza es correcta, terminar el juego
+    if (isCorrect) {
+      io.to(roomId).emit('game_over', {
+        winner: socket.id,
+        correctPokemon: targetPokemon
+      });
+      
+      // Reiniciar juego
+      rooms[roomId].gameStarted = false;
+      rooms[roomId].pokemonId = null;
+      rooms[roomId].pokemonData = null;
+      rooms[roomId].guessHistory = [];
+      rooms[roomId].winner = null;
+    }
+    
+  } catch (error) {
+    console.error('Error processing guess:', error);
+    socket.emit('error', { message: 'Error al procesar tu adivinanza' });
+  }
+});
+
+// Modificar el evento player_ready para iniciar el juego
+// Busca el evento existente y modifícalo así:
+socket.on('player_ready', async (data) => {
+  const roomId = data.roomId;
+  const isReady = data.isReady;
+  
+  if (!roomId || !rooms[roomId]) {
+    socket.emit('error', { message: 'Invalid room' });
+    return;
+  }
+  
+  // Update player ready status
+  const member = rooms[roomId].members.find(m => m.id === socket.id);
+  if (member) {
+    member.isReady = isReady;
+  }
+  
+  // Check if all players are ready
+  const allReady = rooms[roomId].members.every(m => m.isReady);
+  
+  // If all players are ready and game hasn't started, generate Pokemon ID
+  if (allReady && !rooms[roomId].gameStarted) {
+    rooms[roomId].pokemonId = Math.floor(Math.random() * 1025) + 1;
+    rooms[roomId].gameStarted = true;
+    console.log(`Generated Pokemon ID ${rooms[roomId].pokemonId} for room ${roomId}`);
+    
+    // Inicializar otros datos del juego
+    rooms[roomId].guessHistory = [];
+    rooms[roomId].winner = null;
+    
+    // Cargar los datos del Pokémon objetivo (lazy loading)
+    try {
+      await loadTargetPokemonData(roomId);
+    } catch (error) {
+      console.error(`Error loading target Pokemon data for room ${roomId}:`, error);
+    }
+  }
+  
+  // Notify all players in the room about the ready status update
+  io.to(roomId).emit('player_ready_update', {
+    roomId: roomId,
+    members: rooms[roomId].members,
+    allReady: allReady,
+    gameStarted: rooms[roomId].gameStarted
   });
 
-  // Handle disconnect
-  socket.on('disconnect', () => {
-    console.log(`Client disconnected: ${socket.id}`);
+  // Si el juego ha comenzado, enviar el ID del Pokémon a todos los jugadores
+  if (rooms[roomId].gameStarted) {
+    io.to(roomId).emit('pokemon_to_guess', {
+      roomId: roomId,
+      pokemonId: rooms[roomId].pokemonId
+    });
+  }
+});
+
+// Añadir estas funciones auxiliares al final del archivo, fuera del manejador de conexiones:
+
+// Determinar el número de generación
+function getGenerationNumber(generationName) {
+  if (!generationName) return 1;
+  
+  const match = generationName.match(/generation-([ivx]+)/i);
+  if (!match) return 1;
+  
+  const romanNumeral = match[1].toUpperCase();
+  const romanToNumber = {
+    'I': 1, 'II': 2, 'III': 3, 'IV': 4, 'V': 5,
+    'VI': 6, 'VII': 7, 'VIII': 8, 'IX': 9
+  };
+  
+  return romanToNumber[romanNumeral] || 1;
+}
+
+// Cargar datos del Pokémon objetivo
+async function loadTargetPokemonData(roomId) {
+  if (!rooms[roomId] || !rooms[roomId].pokemonId) return null;
+  
+  try {
+    const pokemonId = rooms[roomId].pokemonId;
     
-    // Find all rooms this socket is in
-    for (const roomId in rooms) {
-      const memberIndex = rooms[roomId].members.findIndex(m => m.id === socket.id);
-      
-      if (memberIndex !== -1) {
-        // Remove member from room
-        rooms[roomId].members.splice(memberIndex, 1);
+    // Obtener datos del Pokémon
+    const pokemonResponse = await fetch(`https://pokeapi.co/api/v2/pokemon/${pokemonId}`);
+    const pokemonData = await pokemonResponse.json();
+    
+    // Obtener datos de la especie
+    const speciesResponse = await fetch(pokemonData.species.url);
+    const speciesData = await speciesResponse.json();
+    
+    // Determinar etapa de evolución
+    const evolutionStage = await determineEvolutionStage(speciesData);
+    
+    // Guardar datos completos
+    rooms[roomId].pokemonData = {
+      name: pokemonData.name,
+      sprite: pokemonData.sprites.front_default,
+      types: pokemonData.types,
+      height: pokemonData.height,
+      weight: pokemonData.weight,
+      species: speciesData,
+      evolutionStage: evolutionStage
+    };
+    
+    return rooms[roomId].pokemonData;
+  } catch (error) {
+    console.error(`Error loading Pokemon data for room ${roomId}:`, error);
+    return null;
+  }
+}
+
+// Determinar etapa de evolución
+async function determineEvolutionStage(speciesData) {
+  try {
+    const evolutionResponse = await fetch(speciesData.evolution_chain.url);
+    const evolutionData = await evolutionResponse.json();
+    
+    let stage = 1;
+    let chain = evolutionData.chain;
+    let currentPokemonName = speciesData.name;
+    
+    // Verificar si es la forma base
+    if (chain.species.name === currentPokemonName) {
+      return stage;
+    }
+    
+    // Verificar si es la primera evolución
+    if (chain.evolves_to && chain.evolves_to.length > 0) {
+      stage = 2;
+      for (const evolution of chain.evolves_to) {
+        if (evolution.species.name === currentPokemonName) {
+          return stage;
+        }
         
-        // If room is empty, delete it
-        if (rooms[roomId].members.length === 0) {
-          delete rooms[roomId];
-          console.log(`Room ${roomId} deleted because it's empty`);
-        } else {
-          // Notify others in the room that this user left
-          io.to(roomId).emit('user_left', {
-            userId: socket.id,
-            roomId: roomId,
-            members: rooms[roomId].members
-          });
-          
-          // If game was in progress, end it
-          if (rooms[roomId].gameStarted) {
-            rooms[roomId].gameStarted = false;
-            io.to(roomId).emit('game_aborted', {
-              roomId: roomId,
-              reason: 'Player left the game'
-            });
+        // Verificar si es la segunda evolución
+        if (evolution.evolves_to && evolution.evolves_to.length > 0) {
+          stage = 3;
+          for (const finalEvolution of evolution.evolves_to) {
+            if (finalEvolution.species.name === currentPokemonName) {
+              return stage;
+            }
           }
         }
       }
     }
-  });
-});
+    
+    return stage; // Default a 1 si no podemos determinar
+  } catch (error) {
+    console.error("Error determining evolution stage:", error);
+    return 1; // Default a 1 si hay un error
+  }
+}
+
+// Comparar etapa de evolución
+async function compareEvolutionStage(speciesData, targetStage) {
+  const stage = await determineEvolutionStage(speciesData);
+  return stage === targetStage;
+}
 
 // Start the server
 const PORT = process.env.PORT || 3000

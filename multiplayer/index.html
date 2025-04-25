@@ -3,65 +3,66 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Pokémon Multiplayer</title>
+  <title>Pokémon Guess - Multijugador</title>
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
-  <h1>Pokémon Multiplayer</h1>
-  <p>Your client ID: <span id="clientId">Connecting...</span></p>
+  <h1>Pokémon Guess - Multijugador</h1>
+  <p>Tu ID: <span id="clientId">Conectando...</span></p>
   
   <div class="container">
     <div id="lobbyScreen" class="card">
       <h2>Bienvenido al Lobby</h2>
-      <p>Crea una sala nueva o únete a una existente:</p>
-      <button id="createRoomBtn" class="button">Crear nueva sala</button>
+      <p>Crea una nueva sala o únete a una existente:</p>
+      <button id="createRoomBtn" class="button">Crear Nueva Sala</button>
       <div>
-        <input type="text" id="joinRoomInput" placeholder="Introduce ID de sala">
-        <button id="joinRoomBtn" class="button secondary">Unirse a sala</button>
+        <input type="text" id="joinRoomInput" placeholder="Ingresa ID de Sala">
+        <button id="joinRoomBtn" class="button secondary">Unirse a Sala</button>
       </div>
     </div>
     
     <div id="roomScreen" class="card hidden">
-      <h2>Sala: <span id="roomId">Loading...</span></h2>
-      <p id="roomMembers">Miembros: Loading...</p>
-      <p>Cuando ambos jugadores estén listos, ¡el juego comenzará!</p>
+      <h2>Sala: <span id="roomId">Cargando...</span></h2>
+      <p id="roomMembers">Miembros: Cargando...</p>
       <button id="readyBtn" class="button">Listo</button>
       <button id="sayHelloBtn" class="button">Saludar</button>
-      <button id="leaveRoomBtn" class="button secondary">Salir de la sala</button>
+      <button id="leaveRoomBtn" class="button secondary">Salir de la Sala</button>
       
       <h3>Mensajes:</h3>
       <div id="messages"></div>
     </div>
 
     <div id="gameScreen" class="card hidden">
-      <h2>¡Adivina el Pokémon! - Sala: <span id="gameRoomId">Loading...</span></h2>
-      
-      <div id="gameStatus" class="game-status"></div>
-      
-      <div class="pokemon-card">
-        <img id="pokemon-imagen" src="" alt="Pokemon" class="pokemon-image">
-        <div id="pokemon-info" class="pokemon-info"></div>
-      </div>
+      <h2>Adivina el Pokémon - Sala: <span id="gameRoomId">Cargando...</span></h2>
       
       <div class="search-container">
         <div class="autocomplete-container">
-          <input type="text" id="pokemon-input" placeholder="Escribe el nombre del Pokémon..." autocomplete="off">
+          <input type="text" id="pokemon-input" placeholder="Ingresa nombre de Pokémon..." autocomplete="off">
           <div id="autocomplete-dropdown" class="autocomplete-dropdown"></div>
         </div>
       </div>
       
-      <div id="guesses" class="pokemon-list"></div>
+      <div id="error-message" class="error-message"></div>
+      <div id="loading" class="loading"></div>
       
-      <div id="gameOverScreen" class="game-over-screen hidden">
-        <div id="gameOverMessage" class="game-over-message"></div>
-        <button id="playAgainBtn" class="button">Jugar de nuevo</button>
-        <button id="backToLobbyBtn" class="button secondary">Volver al Lobby</button>
+      <div id="pokemon-list" class="pokemon-list"></div>
+      
+      <div class="pokemon-card hidden" id="correct-pokemon">
+        <img id="pokemon-imagen" src="" alt="Pokemon">
+        <div id="pokemon-info"></div>
       </div>
+      
+      <button id="backToLobbyBtn" class="button secondary">Volver al Lobby</button>
     </div>
+    
+    <div id="loading-screen" class="loading-screen">
+      <img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png" alt="Loading..." class="pokeball">
+      <div class="progress" id="loading-progress">Cargando... 0%</div>
     </div>
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
-  <script type="module" src="../src/multiplayer.js"></script>
+  <script type="module" src="./script.js"></script>
+  <script type="module" src="./multiplayer.js"></script>
 </body>
 </html>

@@ -298,3 +298,11 @@ h1 {
 .pokemon-revealed {
   filter: brightness(1);
 }
+
+.pokemon-hint {
+  text-align: center;
+  margin: 10px 0;
+  font-size: 18px;
+  color: #3c5aa6;
+  font-weight: bold;
+}
