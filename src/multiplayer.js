@@ -58,9 +58,28 @@ export function initMultiplayerGame(socketInstance, roomId) {
           loadingIndicator.style.display = 'block';
         }
         
+        // Limpiar errores anteriores
+        if (errorMessage) {
+          errorMessage.textContent = '';
+        }
+        
+        console.log(`Enviando adivinanza: ${pokemonName} en sala: ${currentRoomId}`);
+        
         // Limpiar el input y dropdown
         pokemonInput.value = '';
         autocompleteDropdown.style.display = 'none';
+        
+        // Añadir listener temporal para capturar errores
+        const errorHandler = (data) => {
+          console.error("Error del servidor:", data);
+          if (errorMessage) {
+            errorMessage.textContent = data.message || "Error al procesar tu adivinanza";
+          }
+          // Remover el listener después de recibir un error
+          socket.off('error', errorHandler);
+        };
+        
+        socket.on('error', errorHandler);
         
         // Enviar la adivinanza al servidor
         socket.emit('guess_pokemon', { 
@@ -68,18 +87,35 @@ export function initMultiplayerGame(socketInstance, roomId) {
           pokemonName 
         });
         
-        // Ocultar indicador de carga después de enviar
-        setTimeout(() => {
+        // Si no hay respuesta en 5 segundos, mostrar mensaje
+        const timeoutId = setTimeout(() => {
           if (loadingIndicator) {
             loadingIndicator.style.display = 'none';
           }
-        }, 500);
+          if (errorMessage) {
+            errorMessage.textContent = "No se recibió respuesta del servidor. Intenta nuevamente.";
+          }
+          socket.off('error', errorHandler);
+        }, 5000);
+        
+        // Si recibimos una respuesta, cancelar el timeout
+        socket.once('guess_result', () => {
+          clearTimeout(timeoutId);
+          if (loadingIndicator) {
+            loadingIndicator.style.display = 'none';
+          }
+          socket.off('error', errorHandler);
+        });
         
       } catch (error) {
+        console.error("Error local al enviar adivinanza:", error);
         if (errorMessage) {
-          errorMessage.textContent = "Error al procesar tu adivinanza";
+          errorMessage.textContent = "Error al enviar tu adivinanza. Verifica tu conexión.";
         }
-        console.error("Error:", error);
+        const loadingIndicator = document.getElementById('loading');
+        if (loadingIndicator) {
+          loadingIndicator.style.display = 'none';
+        }
       }
     }
   });
@@ -190,11 +226,29 @@ function setupAutocomplete(inputElement, dropdownElement) {
 
 // Configurar listeners para eventos del socket relacionados con el juego
 function setupGameSocketListeners() {
+  // Limpiar listeners anteriores para evitar duplicados
+  socket.off('pokemon_to_guess');
+  socket.off('guess_result');
+  socket.off('game_over');
+  socket.off('error');
+  
   // El servidor envía el Pokémon a adivinar
   socket.on('pokemon_to_guess', (data) => {
     console.log('Pokemon para adivinar recibido:', data.pokemonId);
     addSystemMessage('¡El juego ha comenzado! Adivina el Pokémon.');
     gameActive = true;
+    
+    // Limpiar lista de adivinanzas anteriores
+    const pokemonList = document.getElementById('pokemon-list');
+    if (pokemonList) {
+      pokemonList.innerHTML = '';
+    }
+    
+    // Ocultar Pokémon correcto de juegos anteriores
+    const correctPokemonDiv = document.getElementById('correct-pokemon');
+    if (correctPokemonDiv) {
+      correctPokemonDiv.classList.add('hidden');
+    }
   });
   
   // Respuesta a una adivinanza
@@ -202,6 +256,12 @@ function setupGameSocketListeners() {
     console.log('Resultado de adivinanza recibido:', data);
     
     try {
+      // Ocultar indicador de carga
+      const loadingIndicator = document.getElementById('loading');
+      if (loadingIndicator) {
+        loadingIndicator.style.display = 'none';
+      }
+      
       // Crear y mostrar la tarjeta del Pokémon adivinado con los resultados
       createPokemonGuessCard(data);
       
@@ -215,18 +275,59 @@ function setupGameSocketListeners() {
       }
       
       // Si el juego ha terminado, mostrar el Pokémon correcto
-      if (data.gameOver) {
+      if (data.gameOver && data.correctPokemon) {
         gameActive = false;
         
-        if (data.correctPokemon) {
-          setTimeout(() => {
-            showCorrectPokemon(data.correctPokemon);
-          }, 2000);
-        }
+        setTimeout(() => {
+          showCorrectPokemon(data.correctPokemon);
+        }, 2000);
       }
     } catch (error) {
       console.error("Error al procesar resultado de adivinanza:", error);
+      addSystemMessage("Error al mostrar el resultado de la adivinanza.");
     }
+  });
+  
+  // Cuando el juego termina
+  socket.on('game_over', (data) => {
+    console.log('Juego terminado:', data);
+    gameActive = false;
+    
+    // Ocultar indicador de carga si estaba visible
+    const loadingIndicator = document.getElementById('loading');
+    if (loadingIndicator) {
+      loadingIndicator.style.display = 'none';
+    }
+    
+    if (data.winner) {
+      const isCurrentUser = data.winner === socket.id;
+      addSystemMessage(`El juego ha terminado. ${isCurrentUser ? '¡Has ganado!' : `Ganador: ${data.winner.substring(0, 4)}`}`);
+    } else {
+      addSystemMessage('El juego ha terminado. Nadie ha adivinado el Pokémon.');
+    }
+    
+    if (data.correctPokemon) {
+      showCorrectPokemon(data.correctPokemon);
+    }
+  });
+  
+  // Mensajes de error
+  socket.on('error', (data) => {
+    console.error('Error del servidor:', data);
+    
+    // Ocultar indicador de carga
+    const loadingIndicator = document.getElementById('loading');
+    if (loadingIndicator) {
+      loadingIndicator.style.display = 'none';
+    }
+    
+    // Mostrar mensaje de error
+    const errorMessage = document.getElementById('error-message');
+    if (errorMessage) {
+      errorMessage.textContent = data.message || 'Error desconocido';
+    }
+    
+    addSystemMessage(`Error: ${data.message || 'Ha ocurrido un error'}`);
   });
   
   // Cuando el juego termina
