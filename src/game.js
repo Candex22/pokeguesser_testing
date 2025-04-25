@@ -219,3 +219,5 @@ window.onload = async function() {
     `;
   }
 };
+
+export { comparar };

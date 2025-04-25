@@ -1,7 +1,26 @@
-// Import the comparison function from game.js (you'll need to make it exportable in game.js)
-import { comparar } from './game.js';
+// Initialize socket and other variables
+const socket = io();
+let clientId;
+let currentRoomId;
+let isReady = false;
 
-// Add these elements and variables
+// Get DOM elements
+const lobbyScreen = document.getElementById('lobbyScreen');
+const roomScreen = document.getElementById('roomScreen');
+const gameScreen = document.getElementById('gameScreen');
+const clientIdSpan = document.getElementById('clientId');
+const roomIdSpan = document.getElementById('roomId');
+const roomMembersP = document.getElementById('roomMembers');
+const gameStatus = document.getElementById('gameStatus');
+const readyBtn = document.getElementById('readyBtn');
+const createRoomBtn = document.getElementById('createRoomBtn');
+const joinRoomBtn = document.getElementById('joinRoomBtn');
+const joinRoomInput = document.getElementById('joinRoomInput');
+const leaveRoomBtn = document.getElementById('leaveRoomBtn');
+const sayHelloBtn = document.getElementById('sayHelloBtn');
+const messagesDiv = document.getElementById('messages');
+
+// Pokemon game elements
 const pokemonInput = document.getElementById('pokemon-input');
 const autocompleteDropdown = document.getElementById('autocomplete-dropdown');
 const guessesDiv = document.getElementById('guesses');
@@ -9,11 +28,167 @@ const gameOverScreen = document.getElementById('gameOverScreen');
 const gameOverMessage = document.getElementById('gameOverMessage');
 const playAgainBtn = document.getElementById('playAgainBtn');
 const backToLobbyBtn = document.getElementById('backToLobbyBtn');
+const pokemonImage = document.getElementById('pokemon-imagen');
+const pokemonInfo = document.getElementById('pokemon-info');
+
 let currentPokemonData = null;
 let guessCount = 0;
 const MAX_GUESSES = 10;
 
-// Add this function to handle the Pokemon input and autocomplete
+// Set up socket connection
+socket.on('connect', () => {
+  clientId = socket.id;
+  if (clientIdSpan) clientIdSpan.textContent = clientId;
+  console.log('Connected with ID:', clientId);
+});
+
+// Handle errors from server
+socket.on('error', (data) => {
+  console.error('Server error:', data.message);
+  addMessage(`Error: ${data.message}`, true);
+});
+
+// Room creation handler
+if (createRoomBtn) {
+  createRoomBtn.addEventListener('click', () => {
+    socket.emit('create_room');
+  });
+}
+
+// Room created event
+socket.on('room_created', (data) => {
+  currentRoomId = data.roomId;
+  if (roomIdSpan) roomIdSpan.textContent = data.roomId;
+  updateRoomMembers(data.members);
+  
+  // Switch screens
+  if (lobbyScreen) lobbyScreen.classList.add('hidden');
+  if (roomScreen) roomScreen.classList.remove('hidden');
+  
+  addMessage('Room created successfully! Share this ID with friends to join.', true);
+});
+
+// Join room handler
+if (joinRoomBtn && joinRoomInput) {
+  joinRoomBtn.addEventListener('click', () => {
+    const roomId = joinRoomInput.value.trim();
+    if (roomId) {
+      socket.emit('join_room', { roomId });
+    } else {
+      addMessage('Please enter a valid room ID', true);
+    }
+  });
+}
+
+// Room joined event
+socket.on('joined_room', (data) => {
+  currentRoomId = data.roomId;
+  if (roomIdSpan) roomIdSpan.textContent = data.roomId;
+  updateRoomMembers(data.members);
+  
+  // Switch screens
+  if (lobbyScreen) lobbyScreen.classList.add('hidden');
+  if (roomScreen) roomScreen.classList.remove('hidden');
+  
+  addMessage(`You joined room ${data.roomId}`, true);
+});
+
+// User joined event
+socket.on('user_joined', (data) => {
+  if (currentRoomId === data.roomId) {
+    addMessage(`User ${data.userId} joined the room`, true);
+  }
+});
+
+// Leave room handler
+if (leaveRoomBtn) {
+  leaveRoomBtn.addEventListener('click', () => {
+    if (currentRoomId) {
+      // Implement leave room functionality
+      socket.emit('leave_room', { roomId: currentRoomId });
+      currentRoomId = null;
+      
+      // Switch screens
+      if (roomScreen) roomScreen.classList.add('hidden');
+      if (gameScreen) gameScreen.classList.add('hidden');
+      if (lobbyScreen) lobbyScreen.classList.remove('hidden');
+      
+      addMessage('You left the room', true);
+    }
+  });
+}
+
+// Ready button handler
+if (readyBtn) {
+  readyBtn.addEventListener('click', () => {
+    isReady = !isReady;
+    readyBtn.textContent = isReady ? 'Not Ready' : 'Ready';
+    readyBtn.classList.toggle('secondary');
+    
+    if (currentRoomId) {
+      socket.emit('player_ready', {
+        roomId: currentRoomId,
+        isReady: isReady
+      });
+    }
+  });
+}
+
+// Player ready update event
+socket.on('player_ready_update', (data) => {
+  if (currentRoomId === data.roomId) {
+    updateRoomMembers(data.members);
+    
+    if (data.allReady) {
+      addMessage('All players are ready! Game starting soon...', true);
+    }
+  }
+});
+
+// Say hello button handler
+if (sayHelloBtn) {
+  sayHelloBtn.addEventListener('click', () => {
+    if (currentRoomId) {
+      socket.emit('chat_message', {
+        roomId: currentRoomId,
+        message: 'Hello everyone!'
+      });
+    }
+  });
+}
+
+// Chat message event
+socket.on('chat_message', (data) => {
+  if (currentRoomId === data.roomId) {
+    addMessage(`${data.userId}: ${data.message}`);
+  }
+});
+
+// Helper function to update room members display
+function updateRoomMembers(members) {
+  if (!roomMembersP) return;
+  
+  const memberList = members.map(member => {
+    const readyStatus = member.isReady ? '✅ Ready' : '⏳ Not Ready';
+    const isYou = member.id === clientId ? ' (You)' : '';
+    return `${member.id}${isYou}: ${readyStatus}`;
+  }).join('<br>');
+  
+  roomMembersP.innerHTML = `Members:<br>${memberList}`;
+}
+
+// Helper function to add messages to the chat
+function addMessage(text, isSystem = false) {
+  if (!messagesDiv) return;
+  
+  const messageDiv = document.createElement('div');
+  messageDiv.className = isSystem ? 'message system-message' : 'message';
+  messageDiv.textContent = text;
+  messagesDiv.appendChild(messageDiv);
+  messagesDiv.scrollTop = messagesDiv.scrollHeight;
+}
+
+// Function to handle the Pokemon input and autocomplete
 function setupPokemonInput() {
   if (!pokemonInput) return;
 
@@ -44,7 +219,7 @@ function setupPokemonInput() {
           autocompleteDropdown.style.display = 'block';
           matches.forEach(pokemon => {
             const option = document.createElement('div');
-            option.className = 'autocomplete-option';
+            option.className = 'autocomplete-item';
             option.textContent = pokemon.name;
             option.addEventListener('click', function() {
               pokemonInput.value = pokemon.name;
@@ -141,24 +316,25 @@ async function addGuessToUI(pokemonName) {
     
     // Create the guess element
     const guessDiv = document.createElement('div');
-    guessDiv.className = 'pokemon-guess';
+    guessDiv.className = 'pokemon-card-guess';
     guessDiv.id = `guess-${guessCount++}`;
     
     // Add Pokemon data to the guess element
     guessDiv.innerHTML = `
-      <div class="guess-header">
-        <img src="${pokemonData.sprites.front_default}" alt="${pokemonName}" class="guess-sprite">
-        <h3>${pokemonName}</h3>
-      </div>
-      <div class="guess-details">
-        <div id="type1" class="guess-attribute">Type 1: ${pokemonData.types[0].type.name}</div>
-        <div id="type2" class="guess-attribute">Type 2: ${pokemonData.types[1]?.type.name || 'None'}</div>
-        <div id="color" class="guess-attribute">Color: ${speciesData.color.name}</div>
-        <div id="evolutionStage" class="guess-attribute">Evolution: ${evolutionStage}</div>
-        <div id="weight" class="guess-attribute">Weight: ${pokemonData.weight/10} kg</div>
-        <div id="height" class="guess-attribute">Height: ${pokemonData.height/10} m</div>
-        <div id="habitat" class="guess-attribute">Habitat: ${speciesData.habitat?.name || 'Unknown'}</div>
-        <div id="generation" class="guess-attribute">Gen: ${speciesData.generation.name.replace('generation-', '')}</div>
+      <div class="pokemon-data">
+        <div class="pokemon-image-guess">
+          <img src="${pokemonData.sprites.front_default}" alt="${pokemonName}">
+        </div>
+        <div class="pokemon-info-guess">
+          <div id="type1" class="info-cell">${pokemonData.types[0].type.name}</div>
+          <div id="type2" class="info-cell">${pokemonData.types[1]?.type.name || 'None'}</div>
+          <div id="color" class="info-cell">${speciesData.color.name}</div>
+          <div id="evolutionStage" class="info-cell">${evolutionStage}</div>
+          <div id="weight" class="info-cell">${pokemonData.weight/10} kg</div>
+          <div id="height" class="info-cell">${pokemonData.height/10} m</div>
+          <div id="habitat" class="info-cell">${speciesData.habitat?.name || 'Unknown'}</div>
+          <div id="generation" class="info-cell">${speciesData.generation.name.replace('generation-', '')}</div>
+        </div>
       </div>
     `;
     
@@ -199,7 +375,7 @@ function comparePokemon(targetPokemon, guessedPokemon, guessElementId) {
   const guessDiv = document.getElementById(guessElementId);
   if (!guessDiv) return;
   
-  const attributes = guessDiv.querySelectorAll('.guess-attribute');
+  const attributes = guessDiv.querySelectorAll('.info-cell');
   
   // Compare name (win condition)
   if (targetPokemon.name === guessedPokemon.name) {
@@ -214,7 +390,7 @@ function comparePokemon(targetPokemon, guessedPokemon, guessElementId) {
     const attrId = attr.id;
     
     if (attrId === 'type1' && targetPokemon.types[0] === guessedPokemon.types[0]) {
-      attr.style.backgroundColor = '#22df19';
+      attr.classList.add('correct');
     }
     
     if (attrId === 'type2') {
@@ -222,32 +398,32 @@ function comparePokemon(targetPokemon, guessedPokemon, guessElementId) {
       const guessedType2 = guessedPokemon.types[1] || 'None';
       
       if (targetType2 === guessedType2) {
-        attr.style.backgroundColor = '#22df19';
+        attr.classList.add('correct');
       }
     }
     
     if (attrId === 'color' && targetPokemon.color === guessedPokemon.color) {
-      attr.style.backgroundColor = '#22df19';
+      attr.classList.add('correct');
     }
     
     if (attrId === 'evolutionStage' && targetPokemon.evolutionStage === guessedPokemon.evolutionStage) {
-      attr.style.backgroundColor = '#22df19';
+      attr.classList.add('correct');
     }
     
     if (attrId === 'weight' && targetPokemon.weight === guessedPokemon.weight) {
-      attr.style.backgroundColor = '#22df19';
+      attr.classList.add('correct');
     }
     
     if (attrId === 'height' && targetPokemon.height === guessedPokemon.height) {
-      attr.style.backgroundColor = '#22df19';
+      attr.classList.add('correct');
     }
     
     if (attrId === 'habitat' && targetPokemon.habitat === guessedPokemon.habitat) {
-      attr.style.backgroundColor = '#22df19';
+      attr.classList.add('correct');
     }
     
     if (attrId === 'generation' && targetPokemon.generation === guessedPokemon.generation) {
-      attr.style.backgroundColor = '#22df19';
+      attr.classList.add('correct');
     }
   });
   
@@ -260,12 +436,13 @@ socket.on('game_started', (data) => {
     console.log('Game started with Pokemon ID:', data.pokemonId);
     
     // Switch to game screen
-    lobbyScreen.classList.add('hidden');
-    roomScreen.classList.add('hidden');
-    gameScreen.classList.remove('hidden');
+    if (lobbyScreen) lobbyScreen.classList.add('hidden');
+    if (roomScreen) roomScreen.classList.add('hidden');
+    if (gameScreen) gameScreen.classList.remove('hidden');
     
     // Set room ID in game screen
-    document.getElementById('gameRoomId').textContent = currentRoomId;
+    const gameRoomIdElement = document.getElementById('gameRoomId');
+    if (gameRoomIdElement) gameRoomIdElement.textContent = currentRoomId;
     
     // Reset game elements
     if (gameOverScreen) gameOverScreen.classList.add('hidden');
@@ -320,14 +497,12 @@ socket.on('game_started', (data) => {
         };
         
         // Update UI - show the sihouette but don't reveal the name
-        const pokemonImage = document.getElementById('pokemon-imagen');
         if (pokemonImage) {
           pokemonImage.src = pokemon.sprites.front_default;
           pokemonImage.style.filter = 'brightness(0)'; // Silhouette effect
         }
         
         // Update pokemon info display
-        const pokemonInfo = document.getElementById('pokemon-info');
         if (pokemonInfo) {
           pokemonInfo.innerHTML = `
             <div class="pokemon-attribute">Type 1: ${pokemon.types[0].type.name}</div>
@@ -353,7 +528,6 @@ socket.on('game_ended', (data) => {
     const isWinner = data.winnerId === clientId;
     
     // Reveal the Pokemon
-    const pokemonImage = document.getElementById('pokemon-imagen');
     if (pokemonImage) {
       pokemonImage.style.filter = 'none'; // Remove silhouette effect
     }
