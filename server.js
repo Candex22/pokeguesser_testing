@@ -219,7 +219,7 @@ io.on('connection', (socket) => {
 })
 
 // Handle player guess
-socket.on('player_guess', (data) => {
+socket.on('player_guess', async (data) => {
   const roomId = data.roomId;
   const guess = data.guess.toLowerCase();
   
@@ -228,31 +228,45 @@ socket.on('player_guess', (data) => {
     return;
   }
   
-  // Check if the guess is correct
-  if (guess === rooms[roomId].pokemonName) {
-    console.log(`Player ${socket.id} guessed correctly: ${guess}`);
+  try {
+    // Fetch the current Pokemon's data if we don't have it
+    if (!rooms[roomId].pokemonName) {
+      const pokemonId = rooms[roomId].pokemonId;
+      const response = await fetch(`https://pokeapi.co/api/v2/pokemon/${pokemonId}`);
+      const pokemon = await response.json();
+      rooms[roomId].pokemonName = pokemon.name;
+    }
     
-    // Notify all players about the winner
-    io.to(roomId).emit('game_ended', {
-      roomId: roomId,
-      winnerId: socket.id,
-      pokemonName: rooms[roomId].pokemonName,
-      pokemonId: rooms[roomId].pokemonId
-    });
-    
-    // Reset the game but keep players in the room
-    rooms[roomId].gameStarted = false;
-    rooms[roomId].members.forEach(member => {
-      member.isReady = false;
-    });
-    
-  } else {
-    // Notify the player their guess was wrong
-    socket.emit('guess_result', {
-      roomId: roomId,
-      guess: guess,
-      correct: false
-    });
+    // Check if the guess is correct
+    if (guess === rooms[roomId].pokemonName) {
+      console.log(`Player ${socket.id} guessed correctly: ${guess}`);
+      
+      // Notify all players about the winner
+      io.to(roomId).emit('game_ended', {
+        roomId: roomId,
+        winnerId: socket.id,
+        pokemonName: rooms[roomId].pokemonName,
+        pokemonId: rooms[roomId].pokemonId
+      });
+      
+      // Reset the game but keep players in the room
+      rooms[roomId].gameStarted = false;
+      rooms[roomId].members.forEach(member => {
+        member.isReady = false;
+      });
+      
+    } else {
+      // Notify all players about the wrong guess
+      io.to(roomId).emit('guess_result', {
+        roomId: roomId,
+        userId: socket.id,
+        guess: guess,
+        correct: false
+      });
+    }
+  } catch (error) {
+    console.error('Error handling guess:', error);
+    socket.emit('error', { message: 'Error processing your guess' });
   }
 });
 
