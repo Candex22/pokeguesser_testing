@@ -1,79 +1,209 @@
 import { fetchPokemonData } from './api.js';
-import { getGenerationNumber } from './utils.js';
+import { getGenerationNumber, getTextColorClass } from './utils.js';
 
-// Estado del juego compartido para todos los jugadores en una sala
-let gameState = {
-  isGameActive: false,
-  winner: null,
-  guessCount: 0,
-  maxGuesses: 10,
-  playerGuesses: {}
-};
+// Variables globales
+let socket; // Referencia al socket
+let allPokemon = []; // Lista de todos los Pokémon para el autocompletado
+let currentRoomId = null; // ID de la sala actual
+let gameActive = false; // Estado del juego
 
-// Inicializar el juego multiplayer
-export function initMultiplayerGame(socket, roomId) {
+// Inicializar el juego multijugador
+export function initMultiplayerGame(socketInstance, roomId) {
+  // Guardar referencia al socket y al ID de sala
+  socket = socketInstance;
+  currentRoomId = roomId;
+  gameActive = true;
+  
+  console.log('Iniciando juego multijugador en sala:', roomId);
+
+  // Elementos DOM
   const pokemonInput = document.getElementById('pokemon-input');
   const pokemonList = document.getElementById('pokemon-list');
+  const autocompleteDropdown = document.getElementById('autocomplete-dropdown');
   const errorMessage = document.getElementById('error-message');
+  const correctPokemonDiv = document.getElementById('correct-pokemon');
+  const gameRoomIdSpan = document.getElementById('gameRoomId');
   
-  // Ocultar pantalla de carga cuando estemos listos
+  // Actualizar el ID de sala en la interfaz
+  if (gameRoomIdSpan) {
+    gameRoomIdSpan.textContent = roomId;
+  }
+  
+  // Ocultar pantalla de carga si está visible
   const loadingScreen = document.getElementById('loading-screen');
   if (loadingScreen) {
     loadingScreen.style.display = 'none';
   }
   
-  // Escuchar eventos del socket relacionados con el juego
-  setupSocketListeners(socket, roomId);
+  // Limpiar elementos anteriores
+  if (pokemonList) pokemonList.innerHTML = '';
+  if (errorMessage) errorMessage.textContent = '';
+  if (correctPokemonDiv) correctPokemonDiv.classList.add('hidden');
+  
+  // Configurar autocompletado
+  setupAutocomplete(pokemonInput, autocompleteDropdown);
   
   // Configurar el manejador del input para el envío de adivinanzas
   pokemonInput.addEventListener('keypress', async (event) => {
-    if (event.key === 'Enter') {
+    if (event.key === 'Enter' && gameActive) {
       const pokemonName = pokemonInput.value.trim().toLowerCase();
       
       if (!pokemonName) return;
       
       try {
-        // Limpiar el input
+        // Mostrar indicador de carga
+        const loadingIndicator = document.getElementById('loading');
+        if (loadingIndicator) {
+          loadingIndicator.textContent = 'Enviando adivinanza...';
+          loadingIndicator.style.display = 'block';
+        }
+        
+        // Limpiar el input y dropdown
         pokemonInput.value = '';
+        autocompleteDropdown.style.display = 'none';
         
         // Enviar la adivinanza al servidor
         socket.emit('guess_pokemon', { 
-          roomId, 
+          roomId: currentRoomId, 
           pokemonName 
         });
         
+        // Ocultar indicador de carga después de enviar
+        setTimeout(() => {
+          if (loadingIndicator) {
+            loadingIndicator.style.display = 'none';
+          }
+        }, 500);
+        
       } catch (error) {
-        errorMessage.textContent = "Error al procesar tu adivinanza";
+        if (errorMessage) {
+          errorMessage.textContent = "Error al procesar tu adivinanza";
+        }
         console.error("Error:", error);
       }
     }
   });
+  
+  // Configurar botón para volver al lobby
+  const backToLobbyBtn = document.getElementById('backToLobbyBtn');
+  if (backToLobbyBtn) {
+    backToLobbyBtn.addEventListener('click', () => {
+      const gameScreen = document.getElementById('gameScreen');
+      const lobbyScreen = document.getElementById('lobbyScreen');
+      
+      if (gameScreen && lobbyScreen) {
+        gameScreen.classList.add('hidden');
+        lobbyScreen.classList.remove('hidden');
+      }
+      
+      // Salir de la sala actual
+      if (currentRoomId) {
+        socket.emit('leave_room', { roomId: currentRoomId });
+        currentRoomId = null;
+        gameActive = false;
+      }
+    });
+  }
+  
+  // Configurar listeners para eventos del socket relacionados con el juego
+  setupGameSocketListeners();
+  
+  // Cargar lista de Pokémon para autocompletado
+  loadPokemonList();
 }
 
-// Configurar listeners para eventos del socket
-function setupSocketListeners(socket, roomId) {
+// Cargar lista de Pokémon para autocompletado
+async function loadPokemonList() {
+  try {
+    const response = await fetch('https://pokeapi.co/api/v2/pokemon?limit=1025');
+    const data = await response.json();
+    
+    allPokemon = data.results.map(pokemon => ({
+      name: pokemon.name,
+      url: pokemon.url
+    }));
+    
+    console.log(`Cargados ${allPokemon.length} Pokémon para autocompletado`);
+  } catch (error) {
+    console.error('Error cargando lista de Pokémon:', error);
+  }
+}
+
+// Configurar autocompletado
+function setupAutocomplete(inputElement, dropdownElement) {
+  if (!inputElement || !dropdownElement) return;
+  
+  // Cuando el usuario escribe en el input
+  inputElement.addEventListener('input', () => {
+    const value = inputElement.value.toLowerCase().trim();
+    
+    // Si no hay valor, ocultar el dropdown
+    if (!value) {
+      dropdownElement.style.display = 'none';
+      return;
+    }
+    
+    // Filtrar pokémon que coinciden con el input
+    const matches = allPokemon.filter(pokemon => 
+      pokemon.name.toLowerCase().includes(value)
+    ).slice(0, 5); // Limitar a 5 resultados
+    
+    // Si hay coincidencias, mostrar el dropdown
+    if (matches.length > 0) {
+      dropdownElement.innerHTML = '';
+      matches.forEach(pokemon => {
+        const item = document.createElement('div');
+        item.className = 'autocomplete-item';
+        
+        // Intentar obtener el ID del Pokémon de la URL para mostrar la imagen
+        const pokemonId = pokemon.url.split('/').filter(Boolean).pop();
+        
+        item.innerHTML = `
+          <img src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${pokemonId}.png" 
+               alt="${pokemon.name}" 
+               onerror="this.src='https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png'">
+          <span>${pokemon.name}</span>
+        `;
+        
+        // Al hacer clic en un ítem, seleccionarlo
+        item.addEventListener('click', () => {
+          inputElement.value = pokemon.name;
+          dropdownElement.style.display = 'none';
+        });
+        
+        dropdownElement.appendChild(item);
+      });
+      
+      dropdownElement.style.display = 'block';
+    } else {
+      dropdownElement.style.display = 'none';
+    }
+  });
+  
+  // Ocultar dropdown cuando se pierde el foco
+  document.addEventListener('click', (event) => {
+    if (!inputElement.contains(event.target) && !dropdownElement.contains(event.target)) {
+      dropdownElement.style.display = 'none';
+    }
+  });
+}
+
+// Configurar listeners para eventos del socket relacionados con el juego
+function setupGameSocketListeners() {
   // El servidor envía el Pokémon a adivinar
   socket.on('pokemon_to_guess', (data) => {
     console.log('Pokemon para adivinar recibido:', data.pokemonId);
-    // No mostramos ningún dato sobre el Pokémon al jugador
-    gameState.isGameActive = true;
-    
-    // Limpiar la lista de adivinanzas anteriores
-    const pokemonList = document.getElementById('pokemon-list');
-    pokemonList.innerHTML = '';
-    
-    // Mostrar mensaje de inicio de juego
     addSystemMessage('¡El juego ha comenzado! Adivina el Pokémon.');
+    gameActive = true;
   });
   
   // Respuesta a una adivinanza
-  socket.on('guess_result', async (data) => {
+  socket.on('guess_result', (data) => {
+    console.log('Resultado de adivinanza recibido:', data);
+    
     try {
-      // Obtener los datos del Pokémon adivinado para poder compararlo
-      const guessedPokemon = await fetchPokemonData(data.pokemonName);
-      
       // Crear y mostrar la tarjeta del Pokémon adivinado con los resultados
-      createPokemonGuessCard(guessedPokemon, data.comparison, data.userId);
+      createPokemonGuessCard(data);
       
       // Si la adivinanza es correcta y fuimos nosotros, mostrar mensaje de victoria
       if (data.isCorrect && data.userId === socket.id) {
@@ -81,12 +211,12 @@ function setupSocketListeners(socket, roomId) {
       } 
       // Si otro jugador ganó
       else if (data.isCorrect) {
-        addSystemMessage(`¡El jugador ${data.userId} ha adivinado el Pokémon! El juego ha terminado.`);
+        addSystemMessage(`¡El jugador ${data.userId.substring(0, 4)} ha adivinado el Pokémon! El juego ha terminado.`);
       }
       
       // Si el juego ha terminado, mostrar el Pokémon correcto
       if (data.gameOver) {
-        gameState.isGameActive = false;
+        gameActive = false;
         
         if (data.correctPokemon) {
           setTimeout(() => {
@@ -99,32 +229,13 @@ function setupSocketListeners(socket, roomId) {
     }
   });
   
-  // Cuando un jugador se une a la partida ya iniciada
-  socket.on('game_status', (data) => {
-    if (data.isActive) {
-      gameState.isGameActive = true;
-      
-      // Reconstruir el historial de adivinanzas
-      if (data.guessHistory && data.guessHistory.length > 0) {
-        const pokemonList = document.getElementById('pokemon-list');
-        pokemonList.innerHTML = ''; // Limpiar primero
-        
-        // Recrear las tarjetas de adivinanzas anteriores
-        data.guessHistory.forEach(guess => {
-          createPokemonGuessCard(guess.pokemon, guess.comparison, guess.userId);
-        });
-        
-        addSystemMessage('Te has unido a una partida en progreso. Revisa las adivinanzas anteriores.');
-      }
-    }
-  });
-  
-  // Cuando el juego termina (todos los jugadores se fueron, o se acabaron los intentos)
+  // Cuando el juego termina
   socket.on('game_over', (data) => {
-    gameState.isGameActive = false;
+    console.log('Juego terminado:', data);
+    gameActive = false;
     
     if (data.winner) {
-      addSystemMessage(`El juego ha terminado. Ganador: ${data.winner}`);
+      addSystemMessage(`El juego ha terminado. Ganador: ${data.winner.substring(0, 4)}`);
     } else {
       addSystemMessage('El juego ha terminado. Nadie ha adivinado el Pokémon.');
     }
@@ -136,33 +247,13 @@ function setupSocketListeners(socket, roomId) {
 }
 
 // Crear una tarjeta de adivinanza con información de comparación
-function createPokemonGuessCard(pokemon, comparison, userId) {
+function createPokemonGuessCard(data) {
   const pokemonList = document.getElementById('pokemon-list');
+  if (!pokemonList) return;
   
   // Crear la tarjeta del Pokémon
   const card = document.createElement('div');
-  card.className = 'pokemon-card';
-  
-  // Mostrar tarjeta de introducción
-  const introSection = document.createElement('div');
-  introSection.className = 'pokemon-intro fade-in';
-  
-  // Identificar si es nuestra adivinanza o de otro jugador
-  const isCurrentUser = userId === socket.id;
-  const userLabel = isCurrentUser ? 'Tú' : `Jugador ${userId.substring(0, 4)}`;
-  
-  // Contenido de la introducción
-  introSection.innerHTML = `
-    <div class="intro-container">
-      <div class="intro-image">
-        <img src="${pokemon.sprite}" alt="${pokemon.name}">
-      </div>
-      <div class="intro-info">
-        <span class="intro-name">${pokemon.name}</span>
-        <p>${userLabel} ha adivinado este Pokémon</p>
-      </div>
-    </div>
-  `;
+  card.className = 'pokemon-card-guess';
   
   // Sección de datos del Pokémon con comparación
   const dataSection = document.createElement('div');
@@ -170,56 +261,87 @@ function createPokemonGuessCard(pokemon, comparison, userId) {
   
   // Imagen
   const imageDiv = document.createElement('div');
-  imageDiv.className = 'pokemon-image';
-  imageDiv.innerHTML = `<img src="${pokemon.sprite}" alt="${pokemon.name}">`;
+  imageDiv.className = 'pokemon-image-guess';
+  
+  // Obtener imagen del Pokémon adivinado
+  const pokemonImage = document.createElement('img');
+  
+  // Usar la API de PokeAPI para obtener la imagen por nombre
+  fetch(`https://pokeapi.co/api/v2/pokemon/${data.pokemonName}`)
+    .then(response => response.json())
+    .then(pokemon => {
+      pokemonImage.src = pokemon.sprites.front_default || 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png';
+    })
+    .catch(error => {
+      console.error("Error obteniendo imagen del Pokémon:", error);
+      pokemonImage.src = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png';
+    });
+  
+  pokemonImage.alt = data.pokemonName;
+  imageDiv.appendChild(pokemonImage);
   
   // Información con colores según la comparación
   const infoDiv = document.createElement('div');
-  infoDiv.className = 'pokemon-info';
+  infoDiv.className = 'pokemon-info-guess';
+  
+  // Identificar si es nuestra adivinanza o de otro jugador
+  const isCurrentUser = data.userId === socket.id;
+  const userLabel = document.createElement('div');
+  userLabel.className = 'info-cell';
+  userLabel.textContent = isCurrentUser ? 'Tú' : `J-${data.userId.substring(0, 4)}`;
+  infoDiv.appendChild(userLabel);
+  
+  // Nombre del Pokémon
+  const nameCell = document.createElement('div');
+  nameCell.className = 'info-cell';
+  nameCell.textContent = data.pokemonName;
+  infoDiv.appendChild(nameCell);
   
   // Añadir celdas de información con clases de color según comparación
-  const infoCells = [
-    { id: 'type1', value: pokemon.types[0], match: comparison.type1 },
-    { id: 'type2', value: pokemon.types[1] || 'Ninguno', match: comparison.type2 },
-    { id: 'color', value: pokemon.color, match: comparison.color },
-    { id: 'generation', value: `Gen ${pokemon.generation}`, match: comparison.generation },
-    { id: 'height', value: `${pokemon.height} m`, match: comparison.height },
-    { id: 'weight', value: `${pokemon.weight} kg`, match: comparison.weight },
-    { id: 'habitat', value: pokemon.habitat, match: comparison.habitat },
-    { id: 'evolutionStage', value: `Ev. ${pokemon.evolutionStage}`, match: comparison.evolutionStage }
-  ];
-  
-  infoCells.forEach(cell => {
-    const cellDiv = document.createElement('div');
-    cellDiv.id = cell.id;
-    cellDiv.className = `info-cell ${cell.match ? 'green' : 'red'}`;
-    cellDiv.textContent = cell.value;
-    infoDiv.appendChild(cellDiv);
+  const compareProps = Object.keys(data.comparison);
+  compareProps.forEach(prop => {
+    const cell = document.createElement('div');
+    cell.className = `info-cell ${data.comparison[prop] ? 'correct' : ''}`;
+    
+    switch(prop) {
+      case 'type1':
+        cell.textContent = 'Tipo 1';
+        break;
+      case 'type2':
+        cell.textContent = 'Tipo 2';
+        break;
+      case 'color':
+        cell.textContent = 'Color';
+        break;
+      case 'generation':
+        cell.textContent = 'Gen.';
+        break;
+      case 'height':
+        cell.textContent = 'Altura';
+        break;
+      case 'weight':
+        cell.textContent = 'Peso';
+        break;
+      case 'habitat':
+        cell.textContent = 'Hábitat';
+        break;
+      case 'evolutionStage':
+        cell.textContent = 'Evolución';
+        break;
+      default:
+        cell.textContent = prop;
+    }
+    
+    infoDiv.appendChild(cell);
   });
   
   // Añadir las secciones a la tarjeta
   dataSection.appendChild(imageDiv);
   dataSection.appendChild(infoDiv);
-  card.appendChild(introSection);
   card.appendChild(dataSection);
   
-  // Añadir la tarjeta al principio de la lista
+  // Añadir la tarjeta al principio de la lista para que las más recientes aparezcan arriba
   pokemonList.insertBefore(card, pokemonList.firstChild);
-  
-  // Animación de la tarjeta
-  setTimeout(() => {
-    introSection.classList.remove('fade-in');
-    introSection.classList.add('fade-out');
-    
-    setTimeout(() => {
-      const cells = card.querySelectorAll('.pokemon-image, .info-cell');
-      cells.forEach((cell, index) => {
-        setTimeout(() => {
-          cell.classList.add('animated');
-        }, index * 100);
-      });
-    }, 600);
-  }, 1500);
 }
 
 // Mostrar mensaje del sistema
@@ -236,12 +358,12 @@ function addSystemMessage(text) {
 
 // Mostrar el Pokémon correcto cuando termina el juego
 function showCorrectPokemon(pokemon) {
-  const gameScreen = document.getElementById('gameScreen');
+  const correctPokemonDiv = document.getElementById('correct-pokemon');
   const pokemonInfo = document.getElementById('pokemon-info');
   const pokemonImage = document.getElementById('pokemon-imagen');
   
-  if (gameScreen && pokemonInfo && pokemonImage) {
-    gameScreen.classList.remove('hidden');
+  if (correctPokemonDiv && pokemonInfo && pokemonImage) {
+    correctPokemonDiv.classList.remove('hidden');
     
     // Mostrar imagen del Pokémon
     pokemonImage.src = pokemon.sprite;
@@ -249,15 +371,14 @@ function showCorrectPokemon(pokemon) {
     // Mostrar información completa
     pokemonInfo.innerHTML = `
       <h2>${pokemon.name}</h2>
-      <p>Tipo 1: ${pokemon.types[0]}</p>
-      <p>Tipo 2: ${pokemon.types[1] || 'Ninguno'}</p>
-      <p>Color: ${pokemon.color}</p>
-      <p>Generación: ${pokemon.generation}</p>
-      <p>Habitat: ${pokemon.habitat}</p>
-      <p>Altura: ${pokemon.height} m</p>
-      <p>Peso: ${pokemon.weight} kg</p>
-      <p>Etapa de evolución: ${pokemon.evolutionStage}</p>
+      <p><strong>Tipo 1:</strong> ${pokemon.types[0].type.name}</p>
+      <p><strong>Tipo 2:</strong> ${pokemon.types[1] ? pokemon.types[1].type.name : 'Ninguno'}</p>
+      <p><strong>Color:</strong> ${pokemon.species.color.name}</p>
+      <p><strong>Generación:</strong> ${getGenerationNumber(pokemon.species.generation.name)}</p>
+      <p><strong>Hábitat:</strong> ${pokemon.species.habitat ? pokemon.species.habitat.name : 'Desconocido'}</p>
+      <p><strong>Altura:</strong> ${pokemon.height / 10} m</p>
+      <p><strong>Peso:</strong> ${pokemon.weight / 10} kg</p>
+      <p><strong>Etapa de evolución:</strong> ${pokemon.evolutionStage}</p>
     `;
   }
 }
-
