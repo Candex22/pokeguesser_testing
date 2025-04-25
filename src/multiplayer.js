@@ -261,4 +261,3 @@ function showCorrectPokemon(pokemon) {
   }
 }
 
-export {initMultiplayerGame}
