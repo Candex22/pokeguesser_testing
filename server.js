@@ -80,6 +80,42 @@ io.on('connection', (socket) => {
     
     console.log(`Client ${socket.id} joined room: ${roomId}`);
   });
+
+  socket.on('start_game', async (data) => {
+    const roomId = data.roomId;
+    const room = rooms[roomId];
+  
+    if (!room || room.gameStarted) {
+      socket.emit('error', { message: 'La sala no existe o el juego ya comenzó.' });
+      return;
+    }
+  
+    try {
+      // Elegir un Pokémon aleatorio
+      const pokemonId = Math.floor(Math.random() * 1025) + 1;
+      const response = await fetch(`https://pokeapi.co/api/v2/pokemon/${pokemonId}`);
+      const pokemonData = await response.json();
+  
+      // Guardar datos en la sala
+      room.pokemonId = pokemonId;
+      room.pokemonData = pokemonData;
+      room.gameStarted = true;
+      room.guessHistory = [];
+      room.winner = null;
+  
+      console.log(`Juego iniciado en sala ${roomId} con Pokémon #${pokemonId} (${pokemonData.name})`);
+  
+      // Notificar a todos los jugadores
+      io.to(roomId).emit('game_started', {
+        message: '¡El juego ha comenzado!',
+      });
+  
+    } catch (error) {
+      console.error(`Error al iniciar juego en sala ${roomId}:`, error);
+      socket.emit('error', { message: 'No se pudo iniciar el juego.' });
+    }
+  });
+  
   
   // Salir de sala
   socket.on('leave_room', (data) => {
@@ -127,31 +163,31 @@ io.on('connection', (socket) => {
 socket.on('guess_pokemon', async (data) => {
   const roomId = data.roomId;
   const pokemonName = data.pokemonName.toLowerCase();
-  
+
   console.log(`[${socket.id}] Intenta adivinar: ${pokemonName} en sala: ${roomId}`);
-  
+
   // Validaciones iniciales
   if (!roomId || !rooms[roomId]) {
     console.log(`[ERROR] Sala no válida: ${roomId}`);
     socket.emit('error', { message: 'Sala no válida o inexistente' });
     return;
   }
-  
+
   if (!rooms[roomId].gameStarted) {
     console.log(`[ERROR] Juego no iniciado en sala: ${roomId}`);
     socket.emit('error', { message: 'El juego aún no ha comenzado en esta sala' });
     return;
   }
-  
+
   if (!rooms[roomId].pokemonId) {
     console.log(`[ERROR] No hay Pokémon asignado en sala: ${roomId}`);
     socket.emit('error', { message: 'No hay un Pokémon para adivinar en esta sala' });
     return;
   }
-  
+
   try {
     console.log(`Buscando datos de: ${pokemonName}`);
-    
+
     // Obtener datos del Pokémon adivinado
     const guessResponse = await fetch(`https://pokeapi.co/api/v2/pokemon/${pokemonName}`);
     if (!guessResponse.ok) {
@@ -159,21 +195,7 @@ socket.on('guess_pokemon', async (data) => {
       socket.emit('error', { message: `Pokémon no encontrado: ${pokemonName}` });
       return;
     }
-    
-    const guessedPokemon = await guessResponse.json();
-    console.log(`Datos obtenidos para: ${guessedPokemon.name}`);
-    
-    // Obtener datos de especie
-    console.log(`Obteniendo datos de especie para: ${guessedPokemon.name}`);
-    const speciesResponse = await fetch(guessedPokemon.species.url);
-    if (!speciesResponse.ok) {
-      console.log(`[ERROR] No se pudo obtener datos de especie para: ${guessedPokemon.name}`);
-      socket.emit('error', { message: 'Error al obtener datos de especie del Pokémon' });
-      return;
-    }
-    
-    const speciesData = await speciesResponse.json();
-    
+
     // Si es la primera adivinanza, cargar los datos del Pokémon objetivo
     if (!rooms[roomId].pokemonData) {
       console.log(`Cargando datos del Pokémon objetivo ID: ${rooms[roomId].pokemonId}`);
@@ -190,13 +212,30 @@ socket.on('guess_pokemon', async (data) => {
         return;
       }
     }
-    
-    const targetPokemon = rooms[roomId].pokemonData;
-    console.log(`Comparando con Pokémon objetivo: ${targetPokemon.name}`);
-    
+
+    const guessedPokemon = await guessResponse.json();
+    const correctPokemon = rooms[roomId].pokemonData;
+
+    if (!correctPokemon) {
+      console.error(`[ERROR] Pokémon objetivo no está definido`);
+      socket.emit('error', { message: 'Error interno: Pokémon objetivo no cargado' });
+      return;
+    }
+
     // Verificar si la adivinanza es correcta
-    const isCorrect = guessedPokemon.name === targetPokemon.name;
-    
+    const isCorrect = guessedPokemon.name === correctPokemon.name;
+
+    // Obtener datos de especie
+    console.log(`Obteniendo datos de especie para: ${guessedPokemon.name}`);
+    const speciesResponse = await fetch(guessedPokemon.species.url);
+    if (!speciesResponse.ok) {
+      console.log(`[ERROR] No se pudo obtener datos de especie para: ${guessedPokemon.name}`);
+      socket.emit('error', { message: 'Error al obtener datos de especie del Pokémon' });
+      return;
+    }
+
+    const speciesData = await speciesResponse.json();
+
     // Determinar etapa de evolución del Pokémon adivinado
     let guessedEvolutionStage;
     try {
@@ -205,21 +244,21 @@ socket.on('guess_pokemon', async (data) => {
       console.error(`[ERROR] Error determinando etapa de evolución:`, error);
       guessedEvolutionStage = 1; // Valor por defecto
     }
-    
+
     // Crear objeto de comparación
     const comparison = {
-      type1: guessedPokemon.types[0]?.type.name === targetPokemon.types[0]?.type.name,
-      type2: (guessedPokemon.types[1]?.type.name || 'none') === (targetPokemon.types[1]?.type.name || 'none'),
-      color: speciesData.color.name === targetPokemon.species.color.name,
-      generation: getGenerationNumber(speciesData.generation.name) === getGenerationNumber(targetPokemon.species.generation.name),
-      height: guessedPokemon.height === targetPokemon.height,
-      weight: guessedPokemon.weight === targetPokemon.weight,
-      habitat: (speciesData.habitat?.name || 'unknown') === (targetPokemon.species.habitat?.name || 'unknown'),
-      evolutionStage: guessedEvolutionStage === targetPokemon.evolutionStage
+      type1: guessedPokemon.types[0]?.type.name === correctPokemon.types[0]?.type.name,
+      type2: (guessedPokemon.types[1]?.type.name || 'none') === (correctPokemon.types[1]?.type.name || 'none'),
+      color: speciesData.color.name === correctPokemon.species.color.name,
+      generation: getGenerationNumber(speciesData.generation.name) === getGenerationNumber(correctPokemon.species.generation.name),
+      height: guessedPokemon.height === correctPokemon.height,
+      weight: guessedPokemon.weight === correctPokemon.weight,
+      habitat: (speciesData.habitat?.name || 'unknown') === (correctPokemon.species.habitat?.name || 'unknown'),
+      evolutionStage: guessedEvolutionStage === correctPokemon.evolutionStage
     };
-    
+
     console.log(`Resultados de comparación para ${guessedPokemon.name}:`, comparison);
-    
+
     // Crear objeto de Pokémon para enviar
     const pokemonToSend = {
       name: guessedPokemon.name,
@@ -228,11 +267,11 @@ socket.on('guess_pokemon', async (data) => {
       color: speciesData.color.name,
       generation: getGenerationNumber(speciesData.generation.name),
       height: guessedPokemon.height / 10,
-      weight: guessedPokemon.weight / 10, 
+      weight: guessedPokemon.weight / 10,
       habitat: speciesData.habitat?.name || 'unknown',
       evolutionStage: guessedEvolutionStage
     };
-    
+
     // Guardar la adivinanza en el historial
     rooms[roomId].guessHistory.push({
       userId: socket.id,
@@ -240,13 +279,13 @@ socket.on('guess_pokemon', async (data) => {
       comparison: comparison,
       isCorrect: isCorrect
     });
-    
+
     // Si es correcto, establecer ganador
     if (isCorrect) {
       rooms[roomId].winner = socket.id;
-      console.log(`¡Jugador ${socket.id} ha adivinado correctamente el Pokémon ${targetPokemon.name}!`);
+      console.log(`¡Jugador ${socket.id} ha adivinado correctamente el Pokémon ${correctPokemon.name}!`);
     }
-    
+
     // Enviar resultado a todos los jugadores
     io.to(roomId).emit('guess_result', {
       userId: socket.id,
@@ -254,16 +293,16 @@ socket.on('guess_pokemon', async (data) => {
       comparison: comparison,
       isCorrect: isCorrect,
       gameOver: isCorrect,
-      correctPokemon: isCorrect ? targetPokemon : null
+      correctPokemon: isCorrect ? correctPokemon : null
     });
-    
+
     // Si la adivinanza es correcta, terminar el juego
     if (isCorrect) {
       io.to(roomId).emit('game_over', {
         winner: socket.id,
-        correctPokemon: targetPokemon
+        correctPokemon: correctPokemon
       });
-      
+
       // Reiniciar juego
       console.log(`Reiniciando juego en sala ${roomId}`);
       rooms[roomId].gameStarted = false;
@@ -272,12 +311,13 @@ socket.on('guess_pokemon', async (data) => {
       rooms[roomId].guessHistory = [];
       rooms[roomId].winner = null;
     }
-    
+
   } catch (error) {
     console.error(`[ERROR] Error procesando adivinanza:`, error.message);
     socket.emit('error', { message: 'Error al procesar tu adivinanza. Intenta nuevamente.' });
   }
 });
+
   
   // Manejar estado "listo" del jugador
   socket.on('player_ready', async (data) => {
